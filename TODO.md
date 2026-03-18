@@ -30,6 +30,13 @@
 - [ ] Validate "Normal" termination filter captures intended games
   - Verify filter excludes: time forfeit, abandonment, rules infraction
 - [ ] Decide on train/eval split strategy
+- [ ] Be selective about eval dataset composition
+  - **Rating stratification**: Sample games across rating buckets (e.g., 1000-1400, 1400-1800, 1800-2200, 2200+) to measure model performance across skill levels
+  - **Result balance**: Ensure eval has balanced representation of wins/losses/draws to avoid bias in result prediction metrics
+  - **Game length filtering**: Exclude very short games (<10 moves) that may be early resignations/disconnects; these don't test move prediction well
+  - **Opening diversity**: Sample to cover major opening families (e4, d4, c4, Nf3 systems) rather than overrepresenting popular lines
+  - **Termination type**: Focus on checkmate and resignation games for eval (not draws by repetition/stalemate) since these have clearer "correctness" signal
+  - **Time control**: Consider eval sets per time control (bullet/blitz/rapid) since move quality varies significantly
 - [ ] Review hyperparameters for training from scratch
   - Learning rate, batch size appropriate for from-scratch training?
   - Number of epochs needed?
