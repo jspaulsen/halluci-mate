@@ -4,7 +4,7 @@ from pathlib import Path
 from datasets import Dataset, load_dataset
 from dotenv import load_dotenv
 import torch
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, DataCollatorForSeq2Seq, PreTrainedTokenizer
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, DataCollatorForLanguageModeling, PreTrainedTokenizer
 from transformers.training_args import TrainingArguments
 from transformers.trainer import Trainer
 import wandb
@@ -55,7 +55,9 @@ def main(
     # dataset = split["train"]
     # eval_dataset = split["test"]
 
-    # data_collator = DataCollatorForSeq2Seq(tokenizer=tokenizer)
+    # Using DataCollatorForLanguageModeling (not Seq2Seq) because we're doing pure causal LM
+    # where every token predicts the next - no distinct input/output separation like chat models
+    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
 
     wandb.init(
