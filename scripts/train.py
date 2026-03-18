@@ -1,14 +1,17 @@
-import os
 from pathlib import Path
 
+import torch
+import wandb
 from datasets import Dataset, load_dataset
 from dotenv import load_dotenv
-import torch
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, DataCollatorForLanguageModeling, PreTrainedTokenizer
-from transformers.training_args import TrainingArguments
+from transformers import (
+    AutoConfig,
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    DataCollatorForLanguageModeling,
+)
 from transformers.trainer import Trainer
-import wandb
-
+from transformers.training_args import TrainingArguments
 
 load_dotenv()
 
@@ -59,7 +62,6 @@ def main(
     # where every token predicts the next - no distinct input/output separation like chat models
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
-
     wandb.init(
         project="halluci-mate",
         config={
@@ -69,7 +71,7 @@ def main(
             "grad_accum_steps": gradient_accumulation_steps,
             "warmup_ratio": warmup_ratio,
             "lr_scheduler_type": lr_scheduler,
-        }
+        },
     )
 
     if not wandb.run or not wandb.run.name:
@@ -81,7 +83,6 @@ def main(
 
     torch.cuda.empty_cache()
     torch.cuda.synchronize()
-
 
     trainer = Trainer(
         model=model,
@@ -96,17 +97,14 @@ def main(
             learning_rate=learning_rate,
             warmup_ratio=warmup_ratio,
             # warmup_steps=500,
-
             metric_for_best_model="loss",
             eval_strategy="steps",
             eval_steps=100,
-
             bf16=torch.cuda.is_bf16_supported(),
             fp16=not torch.cuda.is_bf16_supported(),
             logging_steps=1,
             save_steps=100,
             save_total_limit=10,
-
             # https://huggingface.co/docs/bitsandbytes/v0.43.0/en/optimizers#paged-optimizers
             optim="paged_adamw_8bit",
             # optim="adamw_8bit"

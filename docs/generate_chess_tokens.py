@@ -5,6 +5,7 @@ This generates tokens covering:
 - All geometric moves (Queen + Knight patterns cover everything)
 - Special control tokens for game outcomes and metadata
 """
+
 import chess
 
 
@@ -27,9 +28,7 @@ def generate_chess_tokens():
 
             is_diagonal = dist_rank == dist_file
             is_straight = dist_rank == 0 or dist_file == 0
-            is_knight = (dist_rank == 2 and dist_file == 1) or (
-                dist_rank == 1 and dist_file == 2
-            )
+            is_knight = (dist_rank == 2 and dist_file == 1) or (dist_rank == 1 and dist_file == 2)
 
             if is_diagonal or is_straight or is_knight:
                 move = chess.Move(src, dst)
