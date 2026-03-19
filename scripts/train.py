@@ -4,12 +4,7 @@ import torch
 import wandb
 from datasets import Dataset, load_dataset
 from dotenv import load_dotenv
-from transformers import (
-    AutoConfig,
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    DataCollatorForLanguageModeling,
-)
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, DataCollatorForLanguageModeling
 from transformers.trainer import Trainer
 from transformers.training_args import TrainingArguments
 
@@ -87,7 +82,7 @@ def main(
     trainer = Trainer(
         model=model,
         train_dataset=dataset,  # type: ignore
-        eval_dataset=eval_dataset,  # type: ignore
+        # eval_dataset=eval_dataset,  # TODO: uncomment when train/test split is enabled
         data_collator=data_collator,
         args=TrainingArguments(
             per_device_train_batch_size=batch_size,
