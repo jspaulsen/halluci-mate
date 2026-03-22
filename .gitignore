@@ -205,3 +205,31 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Training outputs
+runs-*/
+checkpoints/
+*.pt
+*.safetensors
+*.onnx
+
+# W&B
+wandb/
+
+# Data
+*.parquet
+*.arrow
+data/
+
+# Claude Code
+.claude/skill-logs/
+.claude/plans/
+
+# Editors/tools
+.obsidian/
+.vscode/
+.idea/
+*.local.json
+
+# OS
+.DS_Store
