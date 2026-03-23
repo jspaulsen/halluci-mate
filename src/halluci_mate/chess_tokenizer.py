@@ -71,12 +71,13 @@ class ChessTokenizer(PreTrainedTokenizer):
     """HuggingFace-compatible tokenizer for UCI chess notation.
 
     Sequence format:
-    - Won game: <WHITE> e2e4 e7e5 g1f3 ... <EOS> (white won, white's moves first)
-    - Won game: <BLACK> e7e5 e2e4 ... <EOS> (black won, black's moves first)
-    - Drawn game: <WHITE> e2e4 d7d5 ... <DRAW> <EOS> (white's perspective)
-    - Drawn game: <BLACK> d7d5 e2e4 ... <DRAW> <EOS> (black's perspective)
+    - Won game: <WHITE> e2e4 e7e5 g1f3 ... <EOS> (white won)
+    - Won game: <BLACK> e2e4 e7e5 g1f3 ... <EOS> (black won)
+    - Drawn game: <WHITE> e2e4 d7d5 ... <DRAW> <EOS>
+    - Drawn game: <BLACK> e2e4 d7d5 ... <DRAW> <EOS>
 
-    The leading color token indicates whose perspective (and whose moves come first).
+    Moves are always in standard order (white first, alternating).
+    The leading token indicates perspective ("play as this color").
     For wins, that color won. For draws, both perspectives are trained.
     """
 

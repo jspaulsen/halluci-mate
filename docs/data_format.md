@@ -4,14 +4,14 @@ This document describes how raw Lichess games are transformed into training sequ
 
 ## Sequence Format
 
-Each training example is a sequence of UCI moves from one player's perspective:
+Each training example is a sequence of UCI moves:
 
 ```
-<COLOR> move1 move2 move3 ... [<DRAW>] <EOS>
+<PERSPECTIVE> move1 move2 move3 ... [<DRAW>] <EOS>
 ```
 
-- `<COLOR>`: `<WHITE>` or `<BLACK>` - the player whose perspective this sequence represents
-- Moves are interleaved, but ordered so the perspective player's moves come first in each pair
+- `<PERSPECTIVE>`: `<WHITE>` or `<BLACK>` - the player to "play as"
+- Moves are always in standard chronological order (white's move first, then black's, alternating)
 - `<DRAW>`: Optional, present only for drawn games
 - `<EOS>`: End of sequence
 
@@ -23,13 +23,13 @@ For decisive games (win/loss), generate **one** training example from the winner
 ```
 <WHITE> e2e4 e7e5 g1f3 b8c6 ... <EOS>
 ```
-Moves in standard order (white first).
 
 **Black wins:**
 ```
-<BLACK> e7e5 e2e4 b8c6 g1f3 ... <EOS>
+<BLACK> e2e4 e7e5 g1f3 b8c6 ... <EOS>
 ```
-Moves reordered so black's moves come first in each pair.
+
+Note: Move order is identical - only the perspective token differs.
 
 ### Drawn Games
 
@@ -38,7 +38,7 @@ For draws, generate **two** training examples - one from each perspective.
 **Same game, two sequences:**
 ```
 <WHITE> e2e4 d7d5 c2c4 ... <DRAW> <EOS>
-<BLACK> d7d5 e2e4 c7c6 c2c4 ... <DRAW> <EOS>
+<BLACK> e2e4 d7d5 c2c4 ... <DRAW> <EOS>
 ```
 
 Rationale: In draws, neither player "lost" - both played well enough to not lose. Training from both perspectives ensures the model learns solid play from either side.
@@ -80,22 +80,13 @@ def format_sequence(moves: list[str], perspective: str, is_draw: bool = False) -
     Format moves into a training sequence.
 
     Args:
-        moves: UCI moves in standard order
+        moves: UCI moves in standard order (white first, alternating)
         perspective: "white" or "black"
         is_draw: Whether to append <DRAW> token
     """
-    if perspective == "white":
-        # Standard order: white's moves at even indices (0, 2, 4, ...)
-        ordered_moves = moves
-        color_token = "<WHITE>"
-    else:
-        # Reorder: black's moves first in each pair
-        white_moves = moves[0::2]  # indices 0, 2, 4, ...
-        black_moves = moves[1::2]  # indices 1, 3, 5, ...
-        ordered_moves = interleave(black_moves, white_moves)
-        color_token = "<BLACK>"
+    color_token = "<WHITE>" if perspective == "white" else "<BLACK>"
 
-    tokens = [color_token] + ordered_moves
+    tokens = [color_token] + moves
     if is_draw:
         tokens.append("<DRAW>")
     tokens.append("<EOS>")
