@@ -2,16 +2,16 @@
 Custom HuggingFace-compatible tokenizer for UCI chess moves.
 
 Vocabulary:
-- Special tokens: <PAD>, <UNK>, <EOS>, <WHITE>, <BLACK> (indices 0-4)
+- Special tokens: <PAD>, <UNK>, <EOS>, <WHITE>, <BLACK>, <DRAW> (indices 0-5)
 - Geometric UCI moves: ~1,792 tokens (all valid from-to square combinations)
-- Total: ~1,797 tokens
+- Total: ~1,798 tokens
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING
 
 import chess
 from transformers import PreTrainedTokenizer
@@ -25,6 +25,7 @@ UNK_TOKEN = "<UNK>"
 EOS_TOKEN = "<EOS>"
 WHITE_TOKEN = "<WHITE>"
 BLACK_TOKEN = "<BLACK>"
+DRAW_TOKEN = "<DRAW>"
 
 # Special token indices
 PAD_TOKEN_ID = 0
@@ -32,6 +33,7 @@ UNK_TOKEN_ID = 1
 EOS_TOKEN_ID = 2
 WHITE_TOKEN_ID = 3
 BLACK_TOKEN_ID = 4
+DRAW_TOKEN_ID = 5
 
 
 def _generate_move_vocabulary() -> list[str]:
@@ -68,15 +70,22 @@ def _generate_move_vocabulary() -> list[str]:
 class ChessTokenizer(PreTrainedTokenizer):
     """HuggingFace-compatible tokenizer for UCI chess notation.
 
-    Sequence format: <WHITE> e2e4 e7e5 g1f3 ... <EOS>
-    or: <BLACK> e7e5 e2e4 ... <EOS> (for games from black's perspective)
+    Sequence format:
+    - Won game: <WHITE> e2e4 e7e5 g1f3 ... <EOS> (white won, white's moves first)
+    - Won game: <BLACK> e7e5 e2e4 ... <EOS> (black won, black's moves first)
+    - Drawn game: <WHITE> e2e4 d7d5 ... <DRAW> <EOS> (white's perspective)
+    - Drawn game: <BLACK> d7d5 e2e4 ... <DRAW> <EOS> (black's perspective)
+
+    The leading color token indicates whose perspective (and whose moves come first).
+    For wins, that color won. For draws, both perspectives are trained.
     """
 
-    model_input_names: ClassVar[list[str]] = ["input_ids", "attention_mask"]
+    # Defaults to these values
+    # model_input_names: ClassVar[list[str]] = ["input_ids", "attention_mask"]
 
     def __init__(self, **kwargs) -> None:
         # Build vocabulary: special tokens first, then moves
-        self._special_tokens = [PAD_TOKEN, UNK_TOKEN, EOS_TOKEN, WHITE_TOKEN, BLACK_TOKEN]
+        self._special_tokens = [PAD_TOKEN, UNK_TOKEN, EOS_TOKEN, WHITE_TOKEN, BLACK_TOKEN, DRAW_TOKEN]
         self._move_tokens = _generate_move_vocabulary()
         self._vocab = self._special_tokens + self._move_tokens
 

@@ -25,10 +25,15 @@ Training proceeds in three phases, each building on the previous:
 
 **Approach**: Standard causal language modeling with cross-entropy loss on Lichess game sequences.
 
-**Data format**:
+**Data format** (see [data_format.md](data_format.md) for details):
 ```
-<WHITE> e2e4 e7e5 g1f3 b8c6 f1b5 ... <EOS>
+<WHITE> e2e4 e7e5 g1f3 b8c6 f1b5 ... <EOS>        (white won)
+<BLACK> e7e5 e2e4 b8c6 g1f3 ... <EOS>            (black won)
+<WHITE> e2e4 d7d5 ... <DRAW> <EOS>               (draw, white's perspective)
+<BLACK> d7d5 e2e4 ... <DRAW> <EOS>               (draw, black's perspective)
 ```
+
+Drawn games produce two training examples (one per perspective). Decisive games produce one (winner's perspective only).
 
 **What the model learns**:
 - Valid UCI move structure (4-character from-to notation)

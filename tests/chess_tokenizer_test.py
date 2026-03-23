@@ -10,6 +10,8 @@ from transformers import DataCollatorForLanguageModeling
 from halluci_mate.chess_tokenizer import (
     BLACK_TOKEN,
     BLACK_TOKEN_ID,
+    DRAW_TOKEN,
+    DRAW_TOKEN_ID,
     EOS_TOKEN,
     EOS_TOKEN_ID,
     PAD_TOKEN,
@@ -22,7 +24,7 @@ from halluci_mate.chess_tokenizer import (
 )
 
 # Expected vocabulary size bounds
-# 4 special tokens + ~1792 geometric moves (Queen + Knight patterns)
+# 6 special tokens + ~1792 geometric moves (Queen + Knight patterns)
 MIN_VOCAB_SIZE = 1700
 MAX_VOCAB_SIZE = 1900
 
@@ -43,6 +45,7 @@ class TestVocabulary:
         assert vocab[EOS_TOKEN] == EOS_TOKEN_ID
         assert vocab[WHITE_TOKEN] == WHITE_TOKEN_ID
         assert vocab[BLACK_TOKEN] == BLACK_TOKEN_ID
+        assert vocab[DRAW_TOKEN] == DRAW_TOKEN_ID
 
     def test_common_opening_moves_in_vocab(self) -> None:
         """Common opening moves should be in the vocabulary."""
@@ -101,7 +104,7 @@ class TestEncoding:
         tokenizer = ChessTokenizer()
         ids = tokenizer.encode("f1c4", add_special_tokens=False)
         assert len(ids) == 1
-        assert ids[0] > BLACK_TOKEN_ID  # Should be a move token, not special
+        assert ids[0] > DRAW_TOKEN_ID  # Should be a move token, not special
 
     def test_unknown_token_maps_to_unk(self) -> None:
         """Unknown tokens should map to UNK token ID."""
@@ -140,6 +143,16 @@ class TestDecoding:
         ids = tokenizer.encode(original, add_special_tokens=False)
         decoded = tokenizer.decode(ids)
         assert decoded == original
+
+    def test_roundtrip_drawn_game(self) -> None:
+        """Drawn games end with DRAW token before EOS."""
+        tokenizer = ChessTokenizer()
+        original = f"{WHITE_TOKEN} e2e4 e7e5 {DRAW_TOKEN} {EOS_TOKEN}"
+        ids = tokenizer.encode(original, add_special_tokens=False)
+        decoded = tokenizer.decode(ids)
+        assert decoded == original
+        assert ids[-2] == DRAW_TOKEN_ID
+        assert ids[-1] == EOS_TOKEN_ID
 
     def test_roundtrip_edge_rank_moves(self) -> None:
         tokenizer = ChessTokenizer()
