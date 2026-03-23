@@ -14,6 +14,8 @@ from halluci_mate.chess_tokenizer import (
     EOS_TOKEN_ID,
     PAD_TOKEN,
     PAD_TOKEN_ID,
+    UNK_TOKEN,
+    UNK_TOKEN_ID,
     WHITE_TOKEN,
     WHITE_TOKEN_ID,
     ChessTokenizer,
@@ -37,6 +39,7 @@ class TestVocabulary:
         vocab = tokenizer.get_vocab()
 
         assert vocab[PAD_TOKEN] == PAD_TOKEN_ID
+        assert vocab[UNK_TOKEN] == UNK_TOKEN_ID
         assert vocab[EOS_TOKEN] == EOS_TOKEN_ID
         assert vocab[WHITE_TOKEN] == WHITE_TOKEN_ID
         assert vocab[BLACK_TOKEN] == BLACK_TOKEN_ID
@@ -100,11 +103,11 @@ class TestEncoding:
         assert len(ids) == 1
         assert ids[0] > BLACK_TOKEN_ID  # Should be a move token, not special
 
-    def test_unknown_token_maps_to_pad(self) -> None:
-        """Unknown tokens should map to PAD token ID."""
+    def test_unknown_token_maps_to_unk(self) -> None:
+        """Unknown tokens should map to UNK token ID."""
         tokenizer = ChessTokenizer()
         ids = tokenizer.encode("invalid_move", add_special_tokens=False)
-        assert ids == [PAD_TOKEN_ID]
+        assert ids == [UNK_TOKEN_ID]
 
 
 class TestDecoding:
@@ -156,6 +159,10 @@ class TestHuggingFaceCompat:
     def test_eos_token_id_attribute(self) -> None:
         tokenizer = ChessTokenizer()
         assert tokenizer.eos_token_id == EOS_TOKEN_ID
+
+    def test_unk_token_id_attribute(self) -> None:
+        tokenizer = ChessTokenizer()
+        assert tokenizer.unk_token_id == UNK_TOKEN_ID
 
     def test_vocab_size_property(self) -> None:
         tokenizer = ChessTokenizer()

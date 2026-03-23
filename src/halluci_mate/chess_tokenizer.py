@@ -2,9 +2,9 @@
 Custom HuggingFace-compatible tokenizer for UCI chess moves.
 
 Vocabulary:
-- Special tokens: <PAD>, <EOS>, <WHITE>, <BLACK> (indices 0-3)
+- Special tokens: <PAD>, <UNK>, <EOS>, <WHITE>, <BLACK> (indices 0-4)
 - Geometric UCI moves: ~1,792 tokens (all valid from-to square combinations)
-- Total: ~1,796 tokens
+- Total: ~1,797 tokens
 """
 
 from __future__ import annotations
@@ -21,15 +21,17 @@ if TYPE_CHECKING:
 
 # Special token definitions
 PAD_TOKEN = "<PAD>"
+UNK_TOKEN = "<UNK>"
 EOS_TOKEN = "<EOS>"
 WHITE_TOKEN = "<WHITE>"
 BLACK_TOKEN = "<BLACK>"
 
 # Special token indices
 PAD_TOKEN_ID = 0
-EOS_TOKEN_ID = 1
-WHITE_TOKEN_ID = 2
-BLACK_TOKEN_ID = 3
+UNK_TOKEN_ID = 1
+EOS_TOKEN_ID = 2
+WHITE_TOKEN_ID = 3
+BLACK_TOKEN_ID = 4
 
 
 def _generate_move_vocabulary() -> list[str]:
@@ -74,7 +76,7 @@ class ChessTokenizer(PreTrainedTokenizer):
 
     def __init__(self, **kwargs) -> None:
         # Build vocabulary: special tokens first, then moves
-        self._special_tokens = [PAD_TOKEN, EOS_TOKEN, WHITE_TOKEN, BLACK_TOKEN]
+        self._special_tokens = [PAD_TOKEN, UNK_TOKEN, EOS_TOKEN, WHITE_TOKEN, BLACK_TOKEN]
         self._move_tokens = _generate_move_vocabulary()
         self._vocab = self._special_tokens + self._move_tokens
 
@@ -85,6 +87,7 @@ class ChessTokenizer(PreTrainedTokenizer):
         # Initialize parent class with special tokens
         super().__init__(
             pad_token=PAD_TOKEN,
+            unk_token=UNK_TOKEN,
             eos_token=EOS_TOKEN,
             **kwargs,
         )
@@ -104,11 +107,11 @@ class ChessTokenizer(PreTrainedTokenizer):
 
     def _convert_token_to_id(self, token: str) -> int:
         """Convert a token string to its vocabulary index."""
-        return self._token_to_id.get(token, self._token_to_id[PAD_TOKEN])
+        return self._token_to_id.get(token, UNK_TOKEN_ID)
 
     def _convert_id_to_token(self, index: int) -> str:
         """Convert a vocabulary index to its token string."""
-        return self._id_to_token.get(index, PAD_TOKEN)
+        return self._id_to_token.get(index, UNK_TOKEN)
 
     def convert_tokens_to_string(self, tokens: Sequence[str]) -> str:
         """Convert a sequence of tokens to a single string."""
