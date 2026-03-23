@@ -2,17 +2,6 @@
 
 ## High Priority
 
-### Tokenizer
-- [ ] Create custom chess tokenizer
-  - See `docs/generate_chess_tokens.py` for vocabulary generation
-  - Covers all geometric moves (Queen + Knight patterns)
-  - Special tokens: `<PAD>`, `<WIN>`, `<LOSS>`, `<DRAW>`, `<WHITE>`, `<BLACK>`, `<SEP>`
-
-### Model Setup
-- [ ] Load Qwen3-0.6B architecture only (training from scratch, not fine-tuning)
-  - Use `AutoConfig.from_pretrained()` + `AutoModelForCausalLM.from_config()`
-  - Resize token embeddings to match chess tokenizer vocab size
-
 ### Data Processing
 - [ ] Implement `_process_chess_game()` function in train.py
   - Parse `movetext` field - two formats to handle:
