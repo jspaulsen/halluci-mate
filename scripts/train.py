@@ -4,9 +4,11 @@ import torch
 import wandb
 from datasets import Dataset, load_dataset
 from dotenv import load_dotenv
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, DataCollatorForLanguageModeling
+from transformers import AutoConfig, AutoModelForCausalLM, DataCollatorForLanguageModeling
 from transformers.trainer import Trainer
 from transformers.training_args import TrainingArguments
+
+from halluci_mate.chess_tokenizer import ChessTokenizer
 
 load_dotenv()
 
@@ -23,12 +25,11 @@ def main(
     weight_decay: float = 0.00  # Turn this on if overfitting
 
     model_path: str = "Qwen/Qwen3-0.6B"
-    # TODO: Create custom tokenizer with ~1800 legal chess moves
-    tokenizer = AutoTokenizer.from_pretrained(model_path)  # placeholder
+    tokenizer = ChessTokenizer()
 
     # Load architecture only (training from scratch, not using pretrained weights)
     config = AutoConfig.from_pretrained(model_path)
-    # TODO: config.vocab_size = len(chess_tokenizer)  # resize for chess vocab
+    config.vocab_size = len(tokenizer)
     model = AutoModelForCausalLM.from_config(
         config,
         attn_implementation="flash_attention_2",
