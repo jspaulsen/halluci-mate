@@ -81,9 +81,6 @@ class ChessTokenizer(PreTrainedTokenizer):
     For wins, that color won. For draws, both perspectives are trained.
     """
 
-    # Defaults to these values
-    # model_input_names: ClassVar[list[str]] = ["input_ids", "attention_mask"]
-
     def __init__(self, **kwargs) -> None:
         # Build vocabulary: special tokens first, then moves
         self._special_tokens = [PAD_TOKEN, UNK_TOKEN, EOS_TOKEN, WHITE_TOKEN, BLACK_TOKEN, DRAW_TOKEN]
