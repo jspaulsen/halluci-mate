@@ -10,7 +10,7 @@ opening dimensions.
 
 Only blitz games are included — mixing time controls confounds the Elo
 signal since move quality varies significantly across formats.
-See: ~/projects/research/ai_tools/chess_lm/outputs/8_dataset_pipeline.md
+Ref: Allie (ICLR 2025) https://openreview.net/forum?id=bc2H72hGxB
 
 Usage:
     uv run python scripts/prepare_data.py
@@ -51,7 +51,7 @@ def prepare_dataset(
     stream = load_dataset("Lichess/standard-chess-games", split="train", streaming=True)
     # Blitz-only: mixing time controls confounds the Elo signal since move quality
     # varies significantly across formats (Allie validated blitz-only → GM-calibrated play).
-    # See: ~/projects/research/ai_tools/chess_lm/outputs/8_dataset_pipeline.md
+    # Ref: https://openreview.net/forum?id=bc2H72hGxB
     stream = stream.filter(lambda x: x["Termination"] == "Normal" and is_blitz(x.get("TimeControl", "-")))
 
     total_examples, _ = stream_and_shard(stream, tokenizer, num_games, shard_dir)

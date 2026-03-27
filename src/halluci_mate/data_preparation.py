@@ -29,7 +29,7 @@ SHARD_SIZE = 100_000
 
 # 95/4/1 train/eval/test split — test is held-out for final convergence
 # evaluation only, never touched during development.
-# See: ~/projects/research/ai_tools/chess_lm/outputs/9_baseline_eval_framework.md
+# Ref: Allie (ICLR 2025) https://openreview.net/forum?id=bc2H72hGxB
 EVAL_FRACTION = 0.04
 TEST_FRACTION = 0.01
 
