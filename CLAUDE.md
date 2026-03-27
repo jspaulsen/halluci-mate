@@ -29,15 +29,17 @@ After writing code and tests:
 1. Invoke `/test-and-fix` — iterates pytest + ty + ruff until all pass
 
 Before committing:
-2. Invoke `@agent verify-app` — full suite PASS/FAIL report (read-only, no fixes)
-3. Invoke `@agent code-architect` — module boundary and structural review → APPROVE/NEEDS_CHANGES
+2. Invoke `@agent code-simplifier` — simplify code: dead code, duplication, verbose patterns
+3. Invoke `@agent verify-app` — full suite PASS/FAIL report (read-only, no fixes)
+4. Invoke `@agent build-validator` — build/packaging PASS/FAIL report (install, imports, deps)
+5. Invoke `@agent code-architect` — module boundary and structural review → APPROVE/NEEDS_CHANGES
 
 To ship:
-4. Invoke `/review-changes` — review diff for logic errors, edge cases, style issues
-5. Invoke `/commit-push-pr` — commit + push + open PR
+6. Invoke `/review-changes` — review diff for logic errors, edge cases, style issues
+7. Invoke `/commit-push-pr` — commit + push + open PR
 
 The PostToolUse hook auto-formats/lints Python files on every Edit/Write.
-Do not skip steps 2-3. Do not commit without a passing verify-app report.
+Do not skip steps 2–5. Do not commit without passing verify-app and build-validator reports and code-architect APPROVE.
 
 ## Code Style Rules
 
