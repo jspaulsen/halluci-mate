@@ -1,3 +1,8 @@
+"""Train a chess LLM from scratch using Qwen3-0.6B architecture.
+
+TODO: Load pre-built Parquet files from prepare_data.py instead of raw streaming.
+"""
+
 from pathlib import Path
 
 import torch
@@ -37,22 +42,9 @@ def main(
     )
     model = model.to("cuda")
 
-    # Load Lichess dataset and filter for normal terminations only
-    # TODO: Limit dataset size - full dataset is ~7B rows, need to sample/stream
+    # TODO: Load pre-built Parquet files from prepare_data.py output
     dataset: Dataset = load_dataset("Lichess/standard-chess-games", split="train", streaming=True)  # type: ignore
     dataset = dataset.filter(lambda x: x["Termination"] == "Normal")
-
-    # TODO: Restructure data for training - convert PGN moves to appropriate format
-    # dataset = dataset.map(
-    #     lambda sample: _process_chess_game(sample, tokenizer),
-    #     remove_columns=[name for name in dataset.column_names if name not in ['input_ids', 'attention_mask', 'labels']],
-    #     num_proc=16,
-    # )
-
-    # split = dataset.train_test_split(test_size=0.001)
-
-    # dataset = split["train"]
-    # eval_dataset = split["test"]
 
     # Using DataCollatorForLanguageModeling (not Seq2Seq) because we're doing pure causal LM
     # where every token predicts the next - no distinct input/output separation like chat models
@@ -82,8 +74,7 @@ def main(
 
     trainer = Trainer(
         model=model,
-        train_dataset=dataset,  # type: ignore
-        # eval_dataset=eval_dataset,  # TODO: uncomment when train/test split is enabled
+        train_dataset=dataset,
         data_collator=data_collator,
         args=TrainingArguments(
             per_device_train_batch_size=batch_size,
@@ -92,18 +83,13 @@ def main(
             num_train_epochs=epochs,
             learning_rate=learning_rate,
             warmup_ratio=warmup_ratio,
-            # warmup_steps=500,
             metric_for_best_model="loss",
-            eval_strategy="steps",
-            eval_steps=100,
             bf16=torch.cuda.is_bf16_supported(),
             fp16=not torch.cuda.is_bf16_supported(),
             logging_steps=1,
             save_steps=100,
             save_total_limit=10,
-            # https://huggingface.co/docs/bitsandbytes/v0.43.0/en/optimizers#paged-optimizers
             optim="paged_adamw_8bit",
-            # optim="adamw_8bit"
             weight_decay=weight_decay,
             lr_scheduler_type=lr_scheduler,
             max_grad_norm=1.0,

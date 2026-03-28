@@ -11,7 +11,6 @@ Transformers. Entry point: scripts/train.py.
 ```
 uv run python scripts/train.py    # run training
 uv run pytest                     # run all tests
-uv run pytest tests/unit/         # unit tests only
 uv run ruff check .               # lint
 uv run ruff check --fix .         # lint with auto-fix
 uv run ruff format .              # format
@@ -23,6 +22,24 @@ uv sync                           # install/sync all deps
 ```
 
 Always run `uv run ruff check . && uv run ty check && uv run pytest` before committing.
+
+## Development Workflow
+
+After writing code and tests:
+1. Invoke `/test-and-fix` — iterates pytest + ty + ruff until all pass
+
+Before committing:
+2. Invoke `@agent code-simplifier` — simplify code: dead code, duplication, verbose patterns
+3. Invoke `@agent verify-app` — full suite PASS/FAIL report (read-only, no fixes)
+4. Invoke `@agent build-validator` — build/packaging PASS/FAIL report (install, imports, deps)
+5. Invoke `@agent code-architect` — module boundary and structural review → APPROVE/NEEDS_CHANGES
+
+To ship:
+6. Invoke `/review-changes` — review diff for logic errors, edge cases, style issues
+7. Invoke `/commit-push-pr` — commit + push + open PR
+
+The PostToolUse hook auto-formats/lints Python files on every Edit/Write.
+Do not skip steps 2–5. Do not commit without passing verify-app and build-validator reports and code-architect APPROVE.
 
 ## Code Style Rules
 
@@ -53,7 +70,7 @@ Always run `uv run ruff check . && uv run ty check && uv run pytest` before comm
 - Keep functions under 40 lines. Extract helpers for anything longer
 - No commented-out code in commits. Delete it
 - All function signatures must have type annotations
-- ruff handles formatting — do not manually adjust style. Line length: 120
+- ruff handles formatting — do not manually adjust style. Line length: 180
 - Only assign dataclass defaults when there's a meaningful default
 - Use module-level constants for simple test values, not fixtures
 
@@ -62,11 +79,11 @@ Always run `uv run ruff check . && uv run ty check && uv run pytest` before comm
 ### Directory Structure
 
 ```
-scripts/          ← training scripts (train.py is the main entry point)
-docs/             ← reference scripts and documentation
-tests/
-  unit/           ← unit tests mirroring scripts/ structure
-  integration/    ← integration tests (data pipeline, model loading)
+src/halluci_mate/   ← core library modules (tokenizer, data transforms)
+scripts/            ← training scripts (train.py is the main entry point)
+docs/               ← reference scripts and documentation
+tests/              ← unit tests: <module_name>_test.py
+  integration/      ← integration tests (data pipeline, model loading)
 ```
 
 ### Module Boundaries
@@ -138,7 +155,7 @@ Types: feat, fix, refactor, test, chore, docs, perf
 
 ### File Naming
 
-- Unit tests: tests/unit/<module_name>_test.py (mirrors scripts/<module_name>.py)
+- Unit tests: tests/<module_name>_test.py (mirrors src/halluci_mate/<module_name>.py)
 - Integration tests: tests/integration/<feature>_test.py
 - Test helpers: tests/conftest.py or tests/helpers/<name>.py
 
