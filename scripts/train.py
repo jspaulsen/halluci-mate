@@ -28,6 +28,11 @@ def main(
     learning_rate: float = 3e-4
     weight_decay: float = 0.00  # Turn this on if overfitting
 
+    # TODO: Check this
+    # TF32 gives ~3x faster matmuls on Ampere+ GPUs with minimal precision loss
+    # torch.backends.cuda.matmul.allow_tf32 = True
+    # torch.backends.cudnn.allow_tf32 = True
+
     model_path: str = "Qwen/Qwen3-0.6B"
     tokenizer = ChessTokenizer()
 
@@ -104,7 +109,8 @@ def main(
             eval_steps=500,
             save_steps=100,
             save_total_limit=10,
-            # When pretraining, AdamW is usually better than paged optimizers which can introduce instability early on.
+            # When pretraining, AdamW is usually better than AdamW 8-bit optimizers, which can be unstable.
+            # If memory is a concern, consider gradient checkpointing and/or reducing batch size before switching to 8-bit optimizers.
             # optim="paged_adamw_8bit",
             optim="adamw_torch_fused",
             weight_decay=weight_decay,
