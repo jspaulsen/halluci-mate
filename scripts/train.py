@@ -26,7 +26,7 @@ def main(
     gradient_accumulation_steps: int = 1
     epochs: int = 2
     learning_rate: float = 3e-4  # Conservative rate for from-scratch training stability
-    weight_decay: float = 0.1  # Standard for LM pretraining (Chinchilla, GPT-3, LLaMA)
+    weight_decay: float = 0.01  # Appropriate for 0.6B model (0.1 is for much larger models)
     model_path: str = "Qwen/Qwen3-0.6B-Base"
     tokenizer = ChessTokenizer()
 
