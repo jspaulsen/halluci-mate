@@ -25,15 +25,9 @@ def main(
     batch_size: int = 256
     gradient_accumulation_steps: int = 1
     epochs: int = 2
-    learning_rate: float = 3e-4
-    weight_decay: float = 0.00  # Turn this on if overfitting
-
-    # TODO: Check this
-    # TF32 gives ~3x faster matmuls on Ampere+ GPUs with minimal precision loss
-    # torch.backends.cuda.matmul.allow_tf32 = True
-    # torch.backends.cudnn.allow_tf32 = True
-
-    model_path: str = "Qwen/Qwen3-0.6B"
+    learning_rate: float = 3e-4  # Conservative rate for from-scratch training stability
+    weight_decay: float = 0.1  # Standard for LM pretraining (Chinchilla, GPT-3, LLaMA)
+    model_path: str = "Qwen/Qwen3-0.6B-Base"
     tokenizer = ChessTokenizer()
 
     # Load architecture only (training from scratch, not using pretrained weights)
@@ -115,6 +109,7 @@ def main(
             optim="adamw_torch_fused",
             weight_decay=weight_decay,
             lr_scheduler_type=lr_scheduler,
+            lr_scheduler_kwargs={"min_lr": learning_rate * 0.1},  # Decay to 10% of peak, not zero
             max_grad_norm=1.0,
             seed=4042,
             output_dir=str(output_directory),

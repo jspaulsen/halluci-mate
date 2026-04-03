@@ -51,7 +51,7 @@ def prepare_dataset(
     # Blitz-only: mixing time controls confounds the Elo signal since move quality
     # varies significantly across formats (Allie validated blitz-only → GM-calibrated play).
     # Ref: https://openreview.net/forum?id=bc2H72hGxB
-    stream = stream.filter(lambda x: x["Termination"] == "Normal" and "Blitz" in x.get("Event", ""))
+    stream = stream.filter(lambda x: x["Termination"] == "Normal" and "blitz" in x.get("Event", "").lower())
 
     total_examples, _ = stream_and_shard(stream, tokenizer, num_games, shard_dir)
     save_splits(shard_dir, total_examples, output_dir)
