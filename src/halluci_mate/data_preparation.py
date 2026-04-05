@@ -13,11 +13,11 @@ import shutil
 from collections import Counter, defaultdict
 from pathlib import Path  # noqa: TC003 — used at runtime in path operations
 
-from datasets import Dataset, load_dataset
+from datasets import Dataset, IterableDataset, load_dataset
 from tqdm import tqdm
 
 from halluci_mate.chess_tokenizer import ChessTokenizer
-from halluci_mate.game_metadata import classify_elo_bucket, classify_opening_family, classify_termination_type, classify_time_control
+from halluci_mate.game_metadata import classify_elo_bucket, classify_opening_family, classify_termination_type
 from halluci_mate.game_to_sequences import game_to_sequences
 from halluci_mate.pgn_to_uci import parse_movetext, parse_result
 
@@ -33,7 +33,7 @@ SHARD_SIZE = 100_000
 EVAL_FRACTION = 0.04
 TEST_FRACTION = 0.01
 
-_METADATA_COLUMNS = ["elo_bucket", "result", "opening_family", "time_control", "termination_type"]
+_METADATA_COLUMNS = ["elo_bucket", "result", "opening_family", "termination_type"]
 
 
 def create_tokenizer() -> ChessTokenizer:
@@ -69,7 +69,6 @@ def process_game(sample: dict, tokenizer: ChessTokenizer) -> list[dict]:
     elo = _parse_elo(sample)
     elo_bucket = classify_elo_bucket(*elo) if elo else "unknown"
     opening_family = classify_opening_family(moves[0])
-    time_control = classify_time_control(sample.get("TimeControl", "-"))
     termination_type = classify_termination_type(sample["Result"])
 
     sequences = game_to_sequences(moves, outcome)
@@ -82,7 +81,6 @@ def process_game(sample: dict, tokenizer: ChessTokenizer) -> list[dict]:
             "elo_bucket": elo_bucket,
             "result": outcome,
             "opening_family": opening_family,
-            "time_control": time_control,
             "termination_type": termination_type,
         })
     return results
@@ -150,7 +148,7 @@ def log_eval_distribution(eval_data: Dataset) -> None:
             logger.info("Eval %s distribution: %s", col, dict(sorted(counts.items())))
 
 
-def stream_and_shard(stream: object, tokenizer: ChessTokenizer, num_games: int, shard_dir: Path) -> tuple[int, int]:
+def stream_and_shard(stream: IterableDataset, tokenizer: ChessTokenizer, num_games: int, shard_dir: Path) -> tuple[int, int]:
     """Process streamed games into tokenized shards on disk.
 
     Returns:
@@ -160,22 +158,27 @@ def stream_and_shard(stream: object, tokenizer: ChessTokenizer, num_games: int, 
     shard_index = 0
     skipped = 0
     total_examples = 0
+    games_processed = 0
 
-    for i, sample in enumerate(tqdm(stream, total=num_games, desc="Processing games")):
-        if i >= num_games:
-            break
+    with tqdm(total=num_games, desc="Processing games") as pbar:
+        for sample in stream:
+            if games_processed >= num_games:
+                break
 
-        game_examples = process_game(sample, tokenizer)
-        if game_examples:
-            buffer.extend(game_examples)
-        else:
-            skipped += 1
+            game_examples = process_game(sample, tokenizer)
+            games_processed += 1
+            pbar.update(1)
 
-        if len(buffer) >= SHARD_SIZE:
-            write_shard(buffer, shard_dir, shard_index)
-            total_examples += len(buffer)
-            buffer.clear()
-            shard_index += 1
+            if game_examples:
+                buffer.extend(game_examples)
+            else:
+                skipped += 1
+
+            if len(buffer) >= SHARD_SIZE:
+                write_shard(buffer, shard_dir, shard_index)
+                total_examples += len(buffer)
+                buffer.clear()
+                shard_index += 1
 
     if buffer:
         write_shard(buffer, shard_dir, shard_index)

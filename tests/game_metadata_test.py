@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from halluci_mate.game_metadata import classify_elo_bucket, classify_opening_family, classify_termination_type, classify_time_control, is_blitz
+from halluci_mate.game_metadata import classify_elo_bucket, classify_opening_family, classify_termination_type
 
 # --- ELO bucket ---
 
@@ -42,29 +42,6 @@ def test_classify_opening_family(first_move: str, expected: str) -> None:
     assert classify_opening_family(first_move) == expected
 
 
-# --- Time control ---
-
-TIME_CASES = [
-    ("60+0", "bullet"),       # 60s effective
-    ("120+0", "bullet"),      # 120s effective
-    ("180+0", "blitz"),       # 180s effective (boundary)
-    ("300+0", "blitz"),       # 300s effective
-    ("300+3", "blitz"),       # 300 + 120 = 420s
-    ("300+5", "rapid"),       # 300 + 200 = 500s
-    ("600+0", "rapid"),       # 600s effective
-    ("600+10", "rapid"),      # 600 + 400 = 1000s
-    ("1500+0", "classical"),  # 1500s (boundary)
-    ("1800+30", "classical"), # 1800 + 1200 = 3000s
-    ("-", "classical"),       # correspondence
-    ("invalid", "classical"), # unparseable
-]
-
-
-@pytest.mark.parametrize(("tc", "expected"), TIME_CASES)
-def test_classify_time_control(tc: str, expected: str) -> None:
-    assert classify_time_control(tc) == expected
-
-
 # --- Termination type ---
 
 TERMINATION_CASES = [
@@ -79,19 +56,3 @@ def test_classify_termination_type(result: str, expected: str) -> None:
     assert classify_termination_type(result) == expected
 
 
-# --- is_blitz ---
-
-BLITZ_CASES = [
-    ("180+0", True),
-    ("300+0", True),
-    ("300+3", True),
-    ("60+0", False),     # bullet
-    ("600+0", False),    # rapid
-    ("1500+0", False),   # classical
-    ("-", False),        # correspondence
-]
-
-
-@pytest.mark.parametrize(("tc", "expected"), BLITZ_CASES)
-def test_is_blitz(tc: str, expected: bool) -> None:
-    assert is_blitz(tc) == expected

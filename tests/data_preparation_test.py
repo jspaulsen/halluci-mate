@@ -17,7 +17,6 @@ def _make_sample(
     result: str = "1-0",
     white_elo: str = "1500",
     black_elo: str = "1500",
-    time_control: str = "300+0",
     termination: str = "Normal",
 ) -> dict:
     return {
@@ -25,7 +24,6 @@ def _make_sample(
         "Result": result,
         "WhiteElo": white_elo,
         "BlackElo": black_elo,
-        "TimeControl": time_control,
         "Termination": termination,
     }
 
@@ -40,7 +38,6 @@ def _make_shard_example(i: int, elo_bucket: str = "<1200", result: str = "white"
         "elo_bucket": elo_bucket,
         "result": result,
         "opening_family": "e4",
-        "time_control": "blitz",
         "termination_type": "decisive",
     }
 
@@ -54,7 +51,6 @@ def test_process_game_returns_metadata_columns() -> None:
         assert "elo_bucket" in ex
         assert "result" in ex
         assert "opening_family" in ex
-        assert "time_control" in ex
         assert "termination_type" in ex
 
 
@@ -78,11 +74,6 @@ def test_process_game_elo_classification() -> None:
 def test_process_game_opening_family() -> None:
     examples = process_game(_make_sample(), TOKENIZER)
     assert examples[0]["opening_family"] == "e4"
-
-
-def test_process_game_time_control() -> None:
-    examples = process_game(_make_sample(time_control="60+0"), TOKENIZER)
-    assert examples[0]["time_control"] == "bullet"
 
 
 def test_process_game_result_white_win() -> None:
@@ -165,7 +156,7 @@ def test_build_stratified_splits_covers_strata(tmp_path: Path) -> None:
 
 def test_strip_metadata_removes_columns() -> None:
     ds = Dataset.from_list([
-        {"input_ids": [1], "attention_mask": [1], "elo_bucket": "x", "result": "y", "opening_family": "z", "time_control": "w", "termination_type": "v"},
+        {"input_ids": [1], "attention_mask": [1], "elo_bucket": "x", "result": "y", "opening_family": "z", "termination_type": "v"},
     ])
     stripped = strip_metadata(ds)
     assert set(stripped.column_names) == {"input_ids", "attention_mask"}

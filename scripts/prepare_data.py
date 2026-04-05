@@ -27,7 +27,6 @@ from pathlib import Path
 from datasets import load_dataset
 
 from halluci_mate.data_preparation import create_tokenizer, save_splits, stream_and_shard
-from halluci_mate.game_metadata import is_blitz
 
 logger = logging.getLogger(__name__)
 
@@ -52,14 +51,26 @@ def prepare_dataset(
     # Blitz-only: mixing time controls confounds the Elo signal since move quality
     # varies significantly across formats (Allie validated blitz-only → GM-calibrated play).
     # Ref: https://openreview.net/forum?id=bc2H72hGxB
-    stream = stream.filter(lambda x: x["Termination"] == "Normal" and is_blitz(x.get("TimeControl", "-")))
+    stream = stream.filter(lambda x: x["Termination"] == "Normal" and "blitz" in x.get("Event", "").lower())
 
     total_examples, _ = stream_and_shard(stream, tokenizer, num_games, shard_dir)
     save_splits(shard_dir, total_examples, output_dir)
 
 
+def _configure_logging() -> None:
+    """Configure logging for this script and halluci_mate modules only."""
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+
+    # Configure our loggers without affecting third-party libraries (e.g., HuggingFace)
+    for name in (__name__, "halluci_mate"):
+        log = logging.getLogger(name)
+        log.setLevel(logging.INFO)
+        log.addHandler(handler)
+
+
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    _configure_logging()
 
     parser = argparse.ArgumentParser(description="Prepare Lichess data for training.")
     parser.add_argument("--num-games", type=int, default=DEFAULT_NUM_GAMES, help="Number of games to process")
