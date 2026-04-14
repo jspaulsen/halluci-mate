@@ -46,13 +46,18 @@ def test_queenside_castling() -> None:
     assert moves[9] == "e8c8"
 
 
-def test_promotion_stripped_to_four_chars() -> None:
-    # Construct a position where promotion happens
-    movetext = "1. e4 f5 2. e5 f4 3. e6 f3 4. exd7 fxg2 5. dxc8=Q gxh1=Q"
+def test_promotion_preserves_suffix() -> None:
+    # Construct a position where a pawn promotes
+    movetext = "1. h4 g5 2. hxg5 f5 3. gxf6 Nh6 4. fxe7 Nf5 5. exd8=Q"
     moves = parse_movetext(movetext)
-    # Promotion UCI is 5 chars (e.g. d7c8q), stripped to 4 (d7c8)
-    assert len(moves[-1]) == 4
-    assert len(moves[-2]) == 4
+    # Promotion UCI is 5 chars with piece suffix (q/r/b/n) preserved
+    assert moves[-1] == "e7d8q"
+
+
+def test_promotion_underpromotion_preserves_suffix() -> None:
+    movetext = "1. h4 g5 2. hxg5 f5 3. gxf6 Nh6 4. fxe7 Nf5 5. exd8=N"
+    moves = parse_movetext(movetext)
+    assert moves[-1] == "e7d8n"
 
 
 def test_ambiguous_knight_move() -> None:

@@ -4,7 +4,8 @@ Custom HuggingFace-compatible tokenizer for UCI chess moves.
 Vocabulary:
 - Special tokens: <PAD>, <UNK>, <EOS>, <WHITE>, <BLACK>, <DRAW> (indices 0-5)
 - Geometric UCI moves: ~1,792 tokens (all valid from-to square combinations)
-- Total: ~1,798 tokens
+- Promotion UCI moves: 176 tokens (pawn promotion moves with suffix q/r/b/n)
+- Total: ~1,974 tokens
 """
 
 from __future__ import annotations
@@ -34,6 +35,9 @@ EOS_TOKEN_ID = 2
 WHITE_TOKEN_ID = 3
 BLACK_TOKEN_ID = 4
 DRAW_TOKEN_ID = 5
+
+# Promotion suffixes in UCI notation (queen, rook, bishop, knight).
+_PROMOTION_SUFFIXES = ("q", "r", "b", "n")
 
 
 def _generate_move_vocabulary() -> list[str]:
@@ -67,6 +71,26 @@ def _generate_move_vocabulary() -> list[str]:
     return sorted(moves)
 
 
+def _generate_promotion_vocabulary() -> list[str]:
+    """Generate all valid UCI promotion move tokens (e.g. e7e8q).
+
+    Promotions occur when a pawn moves from rank 7 to rank 8 (white) or rank 2
+    to rank 1 (black), either straight forward or by diagonal capture.
+    """
+    promotions: set[str] = set()
+
+    for src_rank, dst_rank in ((6, 7), (1, 0)):
+        for src_file in range(8):
+            for dst_file in range(max(0, src_file - 1), min(8, src_file + 2)):
+                src = chess.square(src_file, src_rank)
+                dst = chess.square(dst_file, dst_rank)
+                base = chess.Move(src, dst).uci()
+                for suffix in _PROMOTION_SUFFIXES:
+                    promotions.add(f"{base}{suffix}")
+
+    return sorted(promotions)
+
+
 class ChessTokenizer(PreTrainedTokenizer):
     """HuggingFace-compatible tokenizer for UCI chess notation.
 
@@ -84,7 +108,7 @@ class ChessTokenizer(PreTrainedTokenizer):
     def __init__(self, **kwargs) -> None:
         # Build vocabulary: special tokens first, then moves
         self._special_tokens = [PAD_TOKEN, UNK_TOKEN, EOS_TOKEN, WHITE_TOKEN, BLACK_TOKEN, DRAW_TOKEN]
-        self._move_tokens = _generate_move_vocabulary()
+        self._move_tokens = _generate_move_vocabulary() + _generate_promotion_vocabulary()
         self._vocab = self._special_tokens + self._move_tokens
 
         # Build lookup dictionaries

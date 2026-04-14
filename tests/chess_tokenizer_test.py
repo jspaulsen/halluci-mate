@@ -24,9 +24,9 @@ from halluci_mate.chess_tokenizer import (
 )
 
 # Expected vocabulary size bounds
-# 6 special tokens + ~1792 geometric moves (Queen + Knight patterns)
-MIN_VOCAB_SIZE = 1700
-MAX_VOCAB_SIZE = 1900
+# 6 special tokens + ~1792 geometric moves + 176 promotion moves
+MIN_VOCAB_SIZE = 1900
+MAX_VOCAB_SIZE = 2050
 
 
 class TestVocabulary:
@@ -64,6 +64,16 @@ class TestVocabulary:
         knight_moves = ["g1f3", "g1h3", "b1c3", "b1a3", "e4f6", "e4d6", "e4g5", "e4g3"]
         for move in knight_moves:
             assert move in vocab, f"Expected knight move {move} in vocabulary"
+
+    def test_promotion_moves_in_vocab(self) -> None:
+        """Promotion moves (5-char UCI) should be in the vocabulary."""
+        tokenizer = ChessTokenizer()
+        vocab = tokenizer.get_vocab()
+
+        # Straight promotions, diagonal-capture promotions, for white and black
+        promotion_moves = ["e7e8q", "e7e8r", "e7e8b", "e7e8n", "a7b8q", "h7g8n", "e2e1q", "d2c1n"]
+        for move in promotion_moves:
+            assert move in vocab, f"Expected promotion {move} in vocabulary"
 
     def test_invalid_move_not_in_vocab(self) -> None:
         """Geometrically invalid moves should not be in vocabulary."""

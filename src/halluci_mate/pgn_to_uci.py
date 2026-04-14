@@ -6,10 +6,6 @@ import io
 
 import chess.pgn
 
-# Promotion moves produce 5-char UCI (e.g. e7e8q). The tokenizer only has 4-char
-# geometric moves, so we strip the promotion suffix until the tokenizer is extended.
-_UCI_MOVE_LENGTH = 4
-
 _RESULT_TO_OUTCOME: dict[str, str] = {
     "1-0": "white",
     "0-1": "black",
@@ -41,7 +37,7 @@ def parse_movetext(movetext: str) -> list[str]:
     if game is None:
         raise ValueError(f"Failed to parse movetext: {movetext[:100]}")
 
-    moves = [move.uci()[:_UCI_MOVE_LENGTH] for move in game.mainline_moves()]
+    moves = [move.uci() for move in game.mainline_moves()]
 
     if not moves:
         raise ValueError(f"No moves found in movetext: {movetext[:100]}")
