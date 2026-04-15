@@ -6,6 +6,21 @@ Chess LLM trained from scratch. Qwen3-0.6B architecture, custom ~1800-token UCI
 chess tokenizer, Lichess streaming dataset. Python 3.12, uv, PyTorch, HuggingFace
 Transformers. Entry point: scripts/train.py.
 
+## Guiding Principles
+
+Bias toward caution over speed; for trivial tasks, use judgment.
+
+- **Surface assumptions.** Before implementing, state what you're assuming. If multiple
+  interpretations of the request exist, present them — don't pick silently. If something
+  is unclear, stop and ask.
+- **Trace every change to the request.** When editing existing code, touch only what you
+  must. Don't "improve" adjacent code, formatting, or comments. Don't refactor things
+  that aren't broken. If you notice unrelated dead code, mention it — don't delete it.
+- **Define success before coding.** Transform tasks into verifiable goals:
+  - "Fix the bug" → write a test that reproduces it, then make it pass
+  - "Add validation" → write tests for invalid inputs, then make them pass
+  - "Refactor X" → ensure tests pass before and after
+
 ## Build & Test Commands
 
 ```
