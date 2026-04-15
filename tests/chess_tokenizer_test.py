@@ -23,18 +23,16 @@ from halluci_mate.chess_tokenizer import (
     ChessTokenizer,
 )
 
-# Expected vocabulary size bounds
-# 6 special tokens + ~1792 geometric moves + 176 promotion moves
-MIN_VOCAB_SIZE = 1900
-MAX_VOCAB_SIZE = 2050
+# 6 special tokens + 1792 geometric moves + 176 promotion moves
+EXPECTED_VOCAB_SIZE = 1974
 
 
 class TestVocabulary:
     """Tests for vocabulary generation and structure."""
 
-    def test_vocab_size_in_expected_range(self) -> None:
+    def test_vocab_size(self) -> None:
         tokenizer = ChessTokenizer()
-        assert MIN_VOCAB_SIZE <= tokenizer.vocab_size <= MAX_VOCAB_SIZE
+        assert tokenizer.vocab_size == EXPECTED_VOCAB_SIZE
 
     def test_special_tokens_at_correct_indices(self) -> None:
         tokenizer = ChessTokenizer()
