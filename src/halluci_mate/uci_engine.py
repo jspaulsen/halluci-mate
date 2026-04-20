@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, TextIO
 
 import chess
 
+from halluci_mate.game.game import Game, Perspective
 from halluci_mate.inference import IllegalMoveError
 
 if TYPE_CHECKING:
@@ -104,10 +105,12 @@ class UciEngine:
             self.stderr.flush()
 
     def _go(self) -> None:
+        perspective = Perspective.WHITE if self._board.turn == chess.WHITE else Perspective.BLACK
+        game = Game(board=self._board, perspective=perspective)
         try:
-            move = self.engine.generate_move(self._board)
+            move = self.engine.predict(game)
         except IllegalMoveError as exc:
             self.stderr.write(f"info string unconstrained sampling produced illegal move ({exc}); falling back to constrained\n")
             self.stderr.flush()
-            move = self.engine.generate_move(self._board, constrained=True)
+            move = self.engine.predict(game, constrained=True)
         self._write(f"bestmove {move.uci()}")

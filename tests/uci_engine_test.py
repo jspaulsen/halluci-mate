@@ -21,7 +21,7 @@ class FakeModel:
     def __init__(self, vocab_size: int) -> None:
         self._vocab_size = vocab_size
 
-    def __call__(self, *, input_ids: torch.Tensor, **_: object) -> types.SimpleNamespace:
+    def __call__(self, input_ids: torch.Tensor, **_: object) -> types.SimpleNamespace:
         batch, seq = input_ids.shape
         return types.SimpleNamespace(logits=torch.zeros(batch, seq, self._vocab_size))
 
@@ -29,7 +29,7 @@ class FakeModel:
 def _make_engine() -> ChessInferenceEngine:
     tokenizer = ChessTokenizer()
     return ChessInferenceEngine(
-        model=FakeModel(tokenizer.vocab_size),  # type: ignore[arg-type]
+        model=FakeModel(tokenizer.vocab_size),
         tokenizer=tokenizer,
         device=CPU,
         constrained=True,

@@ -59,6 +59,7 @@ known-first-party = ["halluci_mate"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+norecursedirs = ["integration"]
 
 [tool.uv.extra-build-dependencies]
 flash-attn = [{ requirement = "torch", match-runtime = true }]
