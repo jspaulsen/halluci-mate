@@ -19,7 +19,6 @@ load_dotenv()
 
 def main(
     warmup_ratio: float = 0.01,
-    lr_scheduler: str = "cosine_with_min_lr",
     output_directory: Path = Path("runs-v1"),
 ) -> None:
     batch_size: int = 256
@@ -63,7 +62,7 @@ def main(
                 "batch_size": batch_size,
                 "grad_accum_steps": gradient_accumulation_steps,
                 "warmup_ratio": warmup_ratio,
-                "lr_scheduler_type": lr_scheduler,
+                "lr_scheduler_type": "cosine_with_min_lr",
             }
         )
 

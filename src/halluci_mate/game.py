@@ -1,13 +1,12 @@
 from dataclasses import dataclass
-from enum import Enum
-from typing import Self
+from enum import IntEnum
 
 import chess
 
 from halluci_mate.chess_tokenizer import BLACK_TOKEN_ID, WHITE_TOKEN_ID, ChessTokenizer
 
 
-class Perspective(Enum):
+class Perspective(IntEnum):
     WHITE = WHITE_TOKEN_ID
     BLACK = BLACK_TOKEN_ID
 
@@ -18,7 +17,7 @@ class Game:
     perspective: Perspective
 
     def tokenize(self, tokenizer: ChessTokenizer) -> list[int]:
-        tokens = [self.perspective.value]
+        tokens: list[int] = [self.perspective]
 
         for move in self.board.move_stack:
             move_token_id = tokenizer.move_to_id(move.uci())
@@ -29,7 +28,5 @@ class Game:
     def is_legal_move(self, move: chess.Move) -> bool:
         return move in self.board.legal_moves
 
-    def push_move(self, move: chess.Move) -> Self:
+    def push_move(self, move: chess.Move) -> None:
         self.board.push(move)
-
-        return self

@@ -13,24 +13,31 @@ from halluci_mate.chess_tokenizer import ChessTokenizer
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from halluci_mate.game.game import Game
+    from transformers import PreTrainedModel
+
+    from halluci_mate.game import Game
 
 
 class IllegalMoveError(ValueError):
     """Model emitted a token that is not a legal move in the current position."""
 
 
+class GameOverError(ValueError):
+    """Caller invoked ``predict`` on a position with no legal moves (checkmate, stalemate)."""
+
+
 class ChessInferenceEngine:
     """Generate moves from a trained chess LLM checkpoint.
 
-    Conditions on the side-to-move winning (i.e. prepends ``<WHITE>`` or
-    ``<BLACK>`` depending on ``board.turn``). Supports constrained decoding
+    Conditions on ``Game.perspective`` — the color the caller wants to win as —
+    which is independent of whose turn it is. ``Game.tokenize`` prepends the
+    ``<WHITE>`` or ``<BLACK>`` token accordingly. Supports constrained decoding
     (mask to legal UCI move tokens) or unconstrained sampling (the raw model).
     """
 
     def __init__(
         self,
-        model,
+        model: PreTrainedModel,
         tokenizer: ChessTokenizer,
         device: torch.device,
         *,
@@ -53,7 +60,7 @@ class ChessInferenceEngine:
         constrained: bool = True,
         temperature: float = 0.0,
         top_k: int = 0,
-        device: str | None = None,
+        device: str | torch.device | None = None,
     ) -> ChessInferenceEngine:
         """Load an engine from a Hugging Face Trainer checkpoint directory."""
         resolved_device = torch.device(device) if device else _default_device()
@@ -77,9 +84,18 @@ class ChessInferenceEngine:
         game: Game,
         constrained: bool | None = None,
     ) -> chess.Move:
+        # TODO(eval-harness): docs/eval_harness.md requires exposing
+        # `raw_sample_legal` (did the unconstrained top-1 land on a legal move?)
+        # and top-k candidates alongside the played move — needed for Phase 2
+        # legality-DPO seed pairs. Extend the return shape when the eval harness
+        # lands; leaving `-> Move` alone for now since nothing else consumes it.
         use_constrained = self.constrained if constrained is None else constrained
 
         tokens = game.tokenize(self.tokenizer)
+        # TODO(perf): re-encodes the full history every call (O(n²) across a game).
+        # Qwen3 supports KV caching via past_key_values + use_cache=True, but we'd
+        # need to maintain a cache on the engine/Game and feed only the tokens added
+        # since the last call. Hot path for the eval harness once DPO scale kicks in.
         outputs = self.model(torch.tensor([tokens], device=self.device))
         logits = outputs.logits[0, -1, :]
 
@@ -87,10 +103,9 @@ class ChessInferenceEngine:
             legal_moves = list(game.board.legal_moves)
 
             if not legal_moves:
-                raise ValueError(f"No legal moves available in position: {game.board.fen()}")
+                raise GameOverError(f"No legal moves available in position: {game.board.fen()}")
 
-            legal_move_tokens = [move.uci() for move in legal_moves]
-            legal_token_ids = [self.tokenizer.get_vocab().get(tok) for tok in legal_move_tokens]
+            legal_token_ids = [self.tokenizer.move_to_id(move.uci()) for move in legal_moves]
 
             mask = torch.full_like(logits, float("-inf"))
             mask[torch.tensor(legal_token_ids, device=logits.device)] = 0.0
@@ -111,7 +126,11 @@ class ChessInferenceEngine:
 
 
 def _default_device() -> torch.device:
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
 
 
 def _sample(logits: torch.Tensor, *, temperature: float, top_k: int) -> torch.Tensor:

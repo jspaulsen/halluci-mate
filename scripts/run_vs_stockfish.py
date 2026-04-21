@@ -1,6 +1,9 @@
 """Play halluci-mate against Stockfish over one or more games and report results."""
 
-# NOTE: This script is kinda a pile of shit; it's useful to reference but we shouldn't use it for patterns.
+# NOTE: This script is a sloppy mess. Keeping it around as a reference for the
+# eval harness work; it will be deleted once that lands. Don't use it for patterns,
+# and don't extend it — missing error handling (e.g. IllegalMoveError propagates
+# and kills the whole N-game run) is intentional debt.
 from __future__ import annotations
 
 import argparse
@@ -11,7 +14,7 @@ import chess
 import chess.engine
 import chess.pgn
 
-from halluci_mate.game.game import Game, Perspective
+from halluci_mate.game import Game, Perspective
 from halluci_mate.inference import ChessInferenceEngine
 
 STOCKFISH_SKILL_MIN = 0

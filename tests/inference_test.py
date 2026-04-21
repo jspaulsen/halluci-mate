@@ -10,8 +10,8 @@ import pytest
 import torch
 
 from halluci_mate.chess_tokenizer import BLACK_TOKEN_ID, EOS_TOKEN_ID, WHITE_TOKEN_ID, ChessTokenizer
-from halluci_mate.game.game import Game, Perspective
-from halluci_mate.inference import ChessInferenceEngine, IllegalMoveError
+from halluci_mate.game import Game, Perspective
+from halluci_mate.inference import ChessInferenceEngine, GameOverError, IllegalMoveError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -55,7 +55,7 @@ def _engine(
 ) -> ChessInferenceEngine:
     tokenizer = ChessTokenizer()
     return ChessInferenceEngine(
-        model=model,
+        model=model,  # type: ignore[arg-type]
         tokenizer=tokenizer,
         device=CPU,
         constrained=constrained,
@@ -97,7 +97,7 @@ class TestPredictConstrained:
         tokenizer = ChessTokenizer()
         engine = _engine(FakeModel(tokenizer.vocab_size))
         game = _game(_board_after(FOOLS_MATE), perspective=Perspective.BLACK)
-        with pytest.raises(ValueError, match="No legal moves"):
+        with pytest.raises(GameOverError, match="No legal moves"):
             engine.predict(game)
 
 
