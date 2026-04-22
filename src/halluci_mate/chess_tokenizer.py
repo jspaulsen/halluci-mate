@@ -159,3 +159,6 @@ class ChessTokenizer(PreTrainedTokenizer):
             json.dump(self._token_to_id, f, indent=2)
 
         return (str(vocab_file),)
+
+    def move_to_id(self, move_uci: str) -> int:
+        return self._token_to_id.get(move_uci, UNK_TOKEN_ID)

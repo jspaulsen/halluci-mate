@@ -19,12 +19,11 @@ load_dotenv()
 
 def main(
     warmup_ratio: float = 0.01,
-    lr_scheduler: str = "cosine",
     output_directory: Path = Path("runs-v1"),
 ) -> None:
     batch_size: int = 256
     gradient_accumulation_steps: int = 1
-    epochs: int = 2
+    epochs: int = 1
     learning_rate: float = 3e-4  # Conservative rate for from-scratch training stability
     weight_decay: float = 0.01  # Appropriate for 0.6B model (0.1 is for much larger models)
     model_path: str = "Qwen/Qwen3-0.6B-Base"
@@ -54,16 +53,18 @@ def main(
     name_list = [None]
 
     if state.is_main_process:
-        mlflow.set_experiment("halluci-mate")
+        mlflow.set_experiment("halluci-mate-redux")
         mlflow.start_run()
-        mlflow.log_params({
-            "learning_rate": learning_rate,
-            "epochs": epochs,
-            "batch_size": batch_size,
-            "grad_accum_steps": gradient_accumulation_steps,
-            "warmup_ratio": warmup_ratio,
-            "lr_scheduler_type": lr_scheduler,
-        })
+        mlflow.log_params(
+            {
+                "learning_rate": learning_rate,
+                "epochs": epochs,
+                "batch_size": batch_size,
+                "grad_accum_steps": gradient_accumulation_steps,
+                "warmup_ratio": warmup_ratio,
+                "lr_scheduler_type": "cosine_with_min_lr",
+            }
+        )
 
         active_run = mlflow.active_run()
         if not active_run:
@@ -108,9 +109,11 @@ def main(
             # optim="paged_adamw_8bit",
             optim="adamw_torch_fused",
             weight_decay=weight_decay,
-            lr_scheduler_type=lr_scheduler,
+            lr_scheduler_type="cosine_with_min_lr",
             lr_scheduler_kwargs={"min_lr": learning_rate * 0.1},  # Decay to 10% of peak, not zero
             max_grad_norm=1.0,
+            dataloader_num_workers=4,
+            # dataloader_prefetch_factor=2,
             seed=4042,
             output_dir=str(output_directory),
             report_to="mlflow",
