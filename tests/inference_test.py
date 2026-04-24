@@ -22,7 +22,12 @@ FOOLS_MATE = ("f2f3", "e7e5", "g2g4", "d8h4")
 
 
 class FakeModel:
-    """Stand-in for AutoModelForCausalLM that returns controllable logits."""
+    """Stand-in for AutoModelForCausalLM that returns controllable logits.
+
+    Records every call's ``input_ids`` and incoming ``past_key_values`` so tests
+    can assert on KV-cache behavior. Returns a fresh sentinel object for
+    ``past_key_values`` so the engine has something opaque to store.
+    """
 
     def __init__(
         self,
@@ -33,17 +38,21 @@ class FakeModel:
         self._vocab_size = vocab_size
         self._forced = forced_token_id
         self._boost = list(boost_ids) if boost_ids else []
-        self.last_input_ids: torch.Tensor | None = None
+        self.calls: list[tuple[torch.Tensor, object | None]] = []
 
-    def __call__(self, input_ids: torch.Tensor, **_: object) -> types.SimpleNamespace:
-        self.last_input_ids = input_ids
+    @property
+    def last_input_ids(self) -> torch.Tensor | None:
+        return self.calls[-1][0] if self.calls else None
+
+    def __call__(self, input_ids: torch.Tensor, **kwargs: object) -> types.SimpleNamespace:
+        self.calls.append((input_ids, kwargs.get("past_key_values")))
         batch, seq = input_ids.shape
         logits = torch.zeros(batch, seq, self._vocab_size)
         if self._forced is not None:
             logits[:, -1, self._forced] = 100.0
         for tok_id in self._boost:
             logits[:, -1, tok_id] = 10.0
-        return types.SimpleNamespace(logits=logits)
+        return types.SimpleNamespace(logits=logits, past_key_values=object())
 
 
 def _engine(
@@ -161,3 +170,81 @@ class TestConditioning:
         assert model.last_input_ids is not None
         # [perspective, e2e4, e7e5, g1f3]
         assert [int(x) for x in model.last_input_ids[0, 1:]] == [vocab[uci] for uci in played]
+
+
+class TestKVCache:
+    def test_second_predict_forwards_only_new_tokens(self) -> None:
+        tokenizer = ChessTokenizer()
+        model = FakeModel(tokenizer.vocab_size)
+        engine = _engine(model)
+        game = _game(chess.Board())
+
+        engine.predict(game)
+        first_ids, first_past = model.calls[0]
+        assert first_ids.shape == (1, 1)  # [perspective]
+        assert first_past is None
+
+        game.push_move(chess.Move.from_uci("e2e4"))
+        engine.predict(game)
+        second_ids, second_past = model.calls[1]
+        assert second_ids.shape == (1, 1)  # only the new move
+        assert second_past is not None
+
+    def test_new_game_starts_with_full_forward(self) -> None:
+        tokenizer = ChessTokenizer()
+        model = FakeModel(tokenizer.vocab_size)
+        engine = _engine(model)
+        game = _game(_board_after(["e2e4", "e7e5"]))
+
+        engine.predict(game)
+        input_ids, past = model.calls[0]
+        assert input_ids.shape == (1, 3)  # [perspective, e2e4, e7e5]
+        assert past is None
+
+    def test_reset_cache_forces_full_forward(self) -> None:
+        tokenizer = ChessTokenizer()
+        model = FakeModel(tokenizer.vocab_size)
+        engine = _engine(model)
+        game = _game(chess.Board())
+
+        engine.predict(game)
+        game.push_move(chess.Move.from_uci("e2e4"))
+        game.reset_cache()
+        engine.predict(game)
+
+        second_ids, second_past = model.calls[1]
+        assert second_ids.shape == (1, 2)  # full [perspective, e2e4]
+        assert second_past is None
+
+    def test_cache_invalidated_when_moves_popped(self) -> None:
+        tokenizer = ChessTokenizer()
+        model = FakeModel(tokenizer.vocab_size)
+        engine = _engine(model)
+        game = _game(_board_after(["e2e4", "e7e5"]))
+
+        engine.predict(game)  # slow path, cache token_count=3
+        game.board.pop()  # board now has 1 move; tokens length 2 < cached 3
+        engine.predict(game)
+
+        second_ids, second_past = model.calls[1]
+        assert second_ids.shape == (1, 2)
+        assert second_past is None
+
+    def test_constrained_path_still_masks_after_cache_hit(self) -> None:
+        tokenizer = ChessTokenizer()
+        # Force an illegal-from-startpos token each call; constrained path must mask it.
+        illegal_uci = "e2e5"
+        illegal_id = tokenizer.get_vocab()[illegal_uci]
+        model = FakeModel(tokenizer.vocab_size, forced_token_id=illegal_id)
+        engine = _engine(model)
+        game = _game(chess.Board())
+
+        first_move = engine.predict(game)
+        assert first_move.uci() != illegal_uci
+        game.push_move(first_move)
+
+        # Cache hit on the second call; masking must still apply.
+        second_move = engine.predict(game)
+        assert second_move.uci() != illegal_uci
+        assert second_move in game.board.legal_moves
+        assert model.calls[1][1] is not None  # past_key_values was passed

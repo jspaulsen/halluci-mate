@@ -9,6 +9,7 @@ import torch
 from transformers import AutoModelForCausalLM
 
 from halluci_mate.chess_tokenizer import ChessTokenizer
+from halluci_mate.game import KVCacheState
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -92,11 +93,23 @@ class ChessInferenceEngine:
         use_constrained = self.constrained if constrained is None else constrained
 
         tokens = game.tokenize(self.tokenizer)
-        # TODO(perf): re-encodes the full history every call (O(n²) across a game).
-        # Qwen3 supports KV caching via past_key_values + use_cache=True, but we'd
-        # need to maintain a cache on the engine/Game and feed only the tokens added
-        # since the last call. Hot path for the eval harness once DPO scale kicks in.
-        outputs = self.model(torch.tensor([tokens], device=self.device))
+        cached = game._kv_cache
+        if cached is not None and 0 < cached.token_count < len(tokens):
+            # Fast path: forward only tokens appended since the last call.
+            new_ids = torch.tensor([tokens[cached.token_count :]], device=self.device)
+            cache_position = torch.arange(cached.token_count, len(tokens), device=self.device)
+            outputs = self.model(
+                input_ids=new_ids,
+                past_key_values=cached.cache,
+                use_cache=True,
+                cache_position=cache_position,
+            )
+        else:
+            # Slow path: no cache, re-predict on the same state, or cache ahead of current tokens.
+            all_ids = torch.tensor([tokens], device=self.device)
+            outputs = self.model(input_ids=all_ids, use_cache=True)
+
+        game._kv_cache = KVCacheState(cache=outputs.past_key_values, token_count=len(tokens))
         logits = outputs.logits[0, -1, :]
 
         if use_constrained:

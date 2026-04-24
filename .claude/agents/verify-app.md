@@ -1,3 +1,8 @@
+---
+name: verify-app
+description: Run the full verification suite (ruff, ruff format, ty, pytest) and report a PASS/FAIL table. Read-only — no fixes.
+---
+
 # Verify App
 
 Run full verification suite and report results. No fixes — report only.

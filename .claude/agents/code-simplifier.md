@@ -1,3 +1,8 @@
+---
+name: code-simplifier
+description: Simplify code without changing behavior — dead code, duplication, verbose patterns, deep nesting. Verifies tests + lint still pass after each change.
+---
+
 # Code Simplifier
 
 Simplify code without changing behavior.
