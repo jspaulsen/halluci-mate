@@ -93,11 +93,13 @@ class ChessInferenceEngine:
         use_constrained = self.constrained if constrained is None else constrained
 
         tokens = game.tokenize(self.tokenizer)
-        cached = game._kv_cache
-        if cached is not None and 0 < cached.token_count < len(tokens):
-            # Fast path: forward only tokens appended since the last call.
-            new_ids = torch.tensor([tokens[cached.token_count :]], device=self.device)
-            cache_position = torch.arange(cached.token_count, len(tokens), device=self.device)
+        cached = game.cache
+        cached_len = len(cached.tokens) if cached is not None else 0
+        # Prefix-equality check catches pop+push-different-moves rewrites that
+        # would otherwise silently feed stale KVs to the new tokens.
+        if cached is not None and 0 < cached_len < len(tokens) and tuple(tokens[:cached_len]) == cached.tokens:
+            new_ids = torch.tensor([tokens[cached_len:]], device=self.device)
+            cache_position = torch.arange(cached_len, len(tokens), device=self.device)
             outputs = self.model(
                 input_ids=new_ids,
                 past_key_values=cached.cache,
@@ -105,11 +107,10 @@ class ChessInferenceEngine:
                 cache_position=cache_position,
             )
         else:
-            # Slow path: no cache, re-predict on the same state, or cache ahead of current tokens.
             all_ids = torch.tensor([tokens], device=self.device)
             outputs = self.model(input_ids=all_ids, use_cache=True)
 
-        game._kv_cache = KVCacheState(cache=outputs.past_key_values, token_count=len(tokens))
+        game.cache = KVCacheState(cache=outputs.past_key_values, tokens=tuple(tokens))
         logits = outputs.logits[0, -1, :]
 
         if use_constrained:

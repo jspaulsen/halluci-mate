@@ -64,7 +64,7 @@ def _engine(
 ) -> ChessInferenceEngine:
     tokenizer = ChessTokenizer()
     return ChessInferenceEngine(
-        model=model,  # type: ignore[arg-type]
+        model=model,
         tokenizer=tokenizer,
         device=CPU,
         constrained=constrained,
@@ -222,12 +222,32 @@ class TestKVCache:
         engine = _engine(model)
         game = _game(_board_after(["e2e4", "e7e5"]))
 
-        engine.predict(game)  # slow path, cache token_count=3
+        engine.predict(game)  # slow path, cache holds 3-token prefix
         game.board.pop()  # board now has 1 move; tokens length 2 < cached 3
         engine.predict(game)
 
         second_ids, second_past = model.calls[1]
         assert second_ids.shape == (1, 2)
+        assert second_past is None
+
+    def test_cache_invalidated_on_divergent_history(self) -> None:
+        """Pop + push different moves keeps the token count equal-or-greater
+        than the cached prefix, so a count-only gate would wrongly take the
+        fast path. The prefix-equality check must force a full forward."""
+        tokenizer = ChessTokenizer()
+        model = FakeModel(tokenizer.vocab_size)
+        engine = _engine(model)
+        game = _game(_board_after(["e2e4", "e7e5"]))
+
+        engine.predict(game)  # cache tokens = (perspective, e2e4, e7e5)
+        game.board.pop()
+        game.board.pop()
+        game.push_move(chess.Move.from_uci("d2d4"))
+        game.push_move(chess.Move.from_uci("d7d5"))
+        engine.predict(game)
+
+        second_ids, second_past = model.calls[1]
+        assert second_ids.shape == (1, 3)  # full [perspective, d2d4, d7d5]
         assert second_past is None
 
     def test_constrained_path_still_masks_after_cache_hit(self) -> None:
