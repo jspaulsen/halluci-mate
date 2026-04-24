@@ -95,9 +95,15 @@ class ChessInferenceEngine:
         tokens = game.tokenize(self.tokenizer)
         cached = game.cache
         cached_len = len(cached.tokens) if cached is not None else 0
-        # Prefix-equality check catches pop+push-different-moves rewrites that
-        # would otherwise silently feed stale KVs to the new tokens.
-        if cached is not None and 0 < cached_len < len(tokens) and tuple(tokens[:cached_len]) == cached.tokens:
+        # Fast path requires strictly-new tokens and a matching prefix. Prefix
+        # equality catches pop+push-different-moves rewrites that would otherwise
+        # feed stale KVs. Equal length (cached_len == len(tokens)) falls through
+        # to the slow path; see TODO below.
+        # TODO(perf): on an equal-length cache hit (predict called twice with no
+        # new move, e.g. post-IllegalMoveError retry or alternative sampling) we
+        # could cache last-token logits and skip the forward entirely. Minor
+        # perf; not a hot path today.
+        if cached is not None and cached_len < len(tokens) and tuple(tokens[:cached_len]) == cached.tokens:
             new_ids = torch.tensor([tokens[cached_len:]], device=self.device)
             cache_position = torch.arange(cached_len, len(tokens), device=self.device)
             outputs = self.model(
@@ -110,6 +116,9 @@ class ChessInferenceEngine:
             all_ids = torch.tensor([tokens], device=self.device)
             outputs = self.model(input_ids=all_ids, use_cache=True)
 
+        # Save after a successful forward, before sampling. A downstream
+        # IllegalMoveError doesn't invalidate the cache — it reflects the
+        # tokens we forwarded, and those haven't changed.
         game.cache = KVCacheState(cache=outputs.past_key_values, tokens=tuple(tokens))
         logits = outputs.logits[0, -1, :]
 

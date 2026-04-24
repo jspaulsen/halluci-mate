@@ -17,7 +17,11 @@ class KVCacheState:
     (e.g. ``DynamicCache``); typed as ``object`` so ``game.py`` stays free of
     transformers imports. ``tokens`` is the full token prefix the cache was
     built from — the engine compares it against the current token list to
-    detect history rewrites before taking the fast path."""
+    detect history rewrites before taking the fast path.
+
+    Memory: ``cache`` holds device tensors proportional to ``len(tokens)``.
+    Long-lived ``Game`` instances (e.g. reused across games in an eval loop)
+    should call :meth:`Game.reset_cache` on game end to release the tensors."""
 
     cache: object
     tokens: tuple[int, ...]
@@ -45,9 +49,8 @@ class Game:
         self.board.push(move)
 
     def reset_cache(self) -> None:
-        """Drop the KV cache. Pop and divergent-rewrite cases are auto-detected
-        by prefix comparison on the fast path; this hook remains for explicit
-        invalidation of same-length prefix swaps the comparison cannot catch
-        from the outside (e.g., ``board.set_fen`` to a position whose token
-        prefix happens to match the cached length)."""
+        """Escape hatch for same-length prefix swaps the engine's prefix check
+        cannot detect (e.g. ``board.set_fen`` to a position whose token count
+        matches the cached length). Also the right call on game end to release
+        cache tensors held by long-lived ``Game`` instances."""
         self.cache = None
