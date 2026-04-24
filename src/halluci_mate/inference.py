@@ -96,9 +96,8 @@ class ChessInferenceEngine:
         cached = game.cache
         cached_len = len(cached.tokens) if cached is not None else 0
         # Fast path requires strictly-new tokens and a matching prefix. Prefix
-        # equality catches pop+push-different-moves rewrites that would otherwise
-        # feed stale KVs. Equal length (cached_len == len(tokens)) falls through
-        # to the slow path; see TODO below.
+        # equality catches pop+push-different-moves rewrites that would feed
+        # stale KVs. Equal length falls through to the slow path.
         # TODO(perf): on an equal-length cache hit (predict called twice with no
         # new move, e.g. post-IllegalMoveError retry or alternative sampling) we
         # could cache last-token logits and skip the forward entirely. Minor
