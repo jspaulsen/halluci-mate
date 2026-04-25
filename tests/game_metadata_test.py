@@ -54,5 +54,3 @@ TERMINATION_CASES = [
 @pytest.mark.parametrize(("result", "expected"), TERMINATION_CASES)
 def test_classify_termination_type(result: str, expected: str) -> None:
     assert classify_termination_type(result) == expected
-
-

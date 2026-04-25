@@ -6,7 +6,26 @@ from pathlib import Path  # noqa: TC003 — used at runtime via tmp_path
 
 from datasets import Dataset
 
-from halluci_mate.data_preparation import build_stratified_splits, create_tokenizer, process_game, strip_metadata, write_shard
+from halluci_mate.data_preparation import build_stratified_splits, create_tokenizer, passes_highelo_filter, process_game, strip_metadata, write_shard
+
+HIGHELO_MIN = 2000
+HIGHELO_MAX_RATING_DIFF = 30
+HIGHELO_MAX_ELO_GAP = 200
+
+
+def _make_highelo_sample(
+    white_elo: int = 2100,
+    black_elo: int = 2080,
+    white_diff: int = 5,
+    black_diff: int = -7,
+) -> dict:
+    return {
+        "WhiteElo": white_elo,
+        "BlackElo": black_elo,
+        "WhiteRatingDiff": white_diff,
+        "BlackRatingDiff": black_diff,
+    }
+
 
 SAMPLE_MOVETEXT = "1. e4 e5 2. Nf3 Nc6 3. Bb5 a6"
 SHORT_MOVETEXT = "1. e4 e5 2. Qh5 Nc6 3. Bc4 Nf6 4. Qxf7#"
@@ -107,10 +126,7 @@ def test_write_shard(tmp_path: Path) -> None:
 
 def test_build_stratified_splits_correct_sizes(tmp_path: Path) -> None:
     """Eval and test sets should be exactly the requested sizes."""
-    examples = [
-        _make_shard_example(i, elo_bucket="<1200" if i < 200 else "2000+", result="white" if i % 2 == 0 else "black")
-        for i in range(400)
-    ]
+    examples = [_make_shard_example(i, elo_bucket="<1200" if i < 200 else "2000+", result="white" if i % 2 == 0 else "black") for i in range(400)]
     write_shard(examples, tmp_path, 0)
 
     eval_size = 20
@@ -138,11 +154,7 @@ def test_build_stratified_splits_no_overlap(tmp_path: Path) -> None:
 def test_build_stratified_splits_covers_strata(tmp_path: Path) -> None:
     """Each stratum should have representation in the eval set."""
     strata = [("<1200", "white"), ("<1200", "black"), ("2000+", "white"), ("2000+", "black")]
-    examples = [
-        _make_shard_example(stratum_idx * 50 + j, elo_bucket=bucket, result=result)
-        for stratum_idx, (bucket, result) in enumerate(strata)
-        for j in range(50)
-    ]
+    examples = [_make_shard_example(stratum_idx * 50 + j, elo_bucket=bucket, result=result) for stratum_idx, (bucket, result) in enumerate(strata) for j in range(50)]
     write_shard(examples, tmp_path, 0)
 
     _, eval_ds, _ = build_stratified_splits(tmp_path, 40, 10, seed=42)
@@ -154,9 +166,58 @@ def test_build_stratified_splits_covers_strata(tmp_path: Path) -> None:
     assert "black" in eval_results
 
 
+def test_passes_highelo_filter_accepts_clean_game() -> None:
+    assert passes_highelo_filter(_make_highelo_sample(), HIGHELO_MIN, HIGHELO_MAX_RATING_DIFF, HIGHELO_MAX_ELO_GAP)
+
+
+def test_passes_highelo_filter_rejects_white_below_min() -> None:
+    assert not passes_highelo_filter(_make_highelo_sample(white_elo=1999), HIGHELO_MIN, HIGHELO_MAX_RATING_DIFF, HIGHELO_MAX_ELO_GAP)
+
+
+def test_passes_highelo_filter_rejects_black_below_min() -> None:
+    assert not passes_highelo_filter(_make_highelo_sample(black_elo=1500), HIGHELO_MIN, HIGHELO_MAX_RATING_DIFF, HIGHELO_MAX_ELO_GAP)
+
+
+def test_passes_highelo_filter_rejects_large_rating_diff() -> None:
+    assert not passes_highelo_filter(_make_highelo_sample(black_diff=-94), HIGHELO_MIN, HIGHELO_MAX_RATING_DIFF, HIGHELO_MAX_ELO_GAP)
+
+
+def test_passes_highelo_filter_rejects_large_positive_rating_diff() -> None:
+    assert not passes_highelo_filter(_make_highelo_sample(white_diff=50), HIGHELO_MIN, HIGHELO_MAX_RATING_DIFF, HIGHELO_MAX_ELO_GAP)
+
+
+def test_passes_highelo_filter_rejects_large_elo_gap() -> None:
+    assert not passes_highelo_filter(_make_highelo_sample(white_elo=2400, black_elo=2100), HIGHELO_MIN, HIGHELO_MAX_RATING_DIFF, HIGHELO_MAX_ELO_GAP)
+
+
+def test_passes_highelo_filter_rejects_missing_field() -> None:
+    sample = _make_highelo_sample()
+    del sample["WhiteRatingDiff"]
+    assert not passes_highelo_filter(sample, HIGHELO_MIN, HIGHELO_MAX_RATING_DIFF, HIGHELO_MAX_ELO_GAP)
+
+
+def test_passes_highelo_filter_rejects_non_int_field() -> None:
+    sample = _make_highelo_sample()
+    sample["WhiteElo"] = "?"
+    assert not passes_highelo_filter(sample, HIGHELO_MIN, HIGHELO_MAX_RATING_DIFF, HIGHELO_MAX_ELO_GAP)
+
+
+def test_passes_highelo_filter_accepts_boundary_values() -> None:
+    """Values exactly at the limits should pass."""
+    sample = _make_highelo_sample(
+        white_elo=2000,
+        black_elo=2200,
+        white_diff=30,
+        black_diff=-30,
+    )
+    assert passes_highelo_filter(sample, HIGHELO_MIN, HIGHELO_MAX_RATING_DIFF, HIGHELO_MAX_ELO_GAP)
+
+
 def test_strip_metadata_removes_columns() -> None:
-    ds = Dataset.from_list([
-        {"input_ids": [1], "attention_mask": [1], "elo_bucket": "x", "result": "y", "opening_family": "z", "termination_type": "v"},
-    ])
+    ds = Dataset.from_list(
+        [
+            {"input_ids": [1], "attention_mask": [1], "elo_bucket": "x", "result": "y", "opening_family": "z", "termination_type": "v"},
+        ]
+    )
     stripped = strip_metadata(ds)
     assert set(stripped.column_names) == {"input_ids", "attention_mask"}
