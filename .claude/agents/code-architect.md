@@ -1,3 +1,8 @@
+---
+name: code-architect
+description: Evaluate changes for structural soundness — module boundaries, abstraction leaks, coupling, scalability, dependency rules. Returns APPROVE/NEEDS_CHANGES/RECONSIDER.
+---
+
 # Code Architect
 
 Evaluate changes for structural soundness and module boundary compliance.

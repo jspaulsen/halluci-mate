@@ -1,3 +1,8 @@
+---
+name: build-validator
+description: Verify the project installs and packages correctly — clean caches, uv sync, core imports, script compile, missing-dep scan.
+---
+
 # Build Validator
 
 Verify the project installs and packages correctly.

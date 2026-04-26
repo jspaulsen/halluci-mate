@@ -9,6 +9,7 @@ import torch
 from transformers import AutoModelForCausalLM
 
 from halluci_mate.chess_tokenizer import ChessTokenizer
+from halluci_mate.game import KVCacheState
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -92,11 +93,32 @@ class ChessInferenceEngine:
         use_constrained = self.constrained if constrained is None else constrained
 
         tokens = game.tokenize(self.tokenizer)
-        # TODO(perf): re-encodes the full history every call (O(n²) across a game).
-        # Qwen3 supports KV caching via past_key_values + use_cache=True, but we'd
-        # need to maintain a cache on the engine/Game and feed only the tokens added
-        # since the last call. Hot path for the eval harness once DPO scale kicks in.
-        outputs = self.model(torch.tensor([tokens], device=self.device))
+        cached = game.cache
+        cached_len = len(cached.tokens) if cached is not None else 0
+        # Fast path requires strictly-new tokens and a matching prefix. Prefix
+        # equality catches pop+push-different-moves rewrites that would feed
+        # stale KVs. Equal length falls through to the slow path.
+        # TODO(perf): on an equal-length cache hit (predict called twice with no
+        # new move, e.g. post-IllegalMoveError retry or alternative sampling) we
+        # could cache last-token logits and skip the forward entirely. Minor
+        # perf; not a hot path today.
+        if cached is not None and cached_len < len(tokens) and tuple(tokens[:cached_len]) == cached.tokens:
+            new_ids = torch.tensor([tokens[cached_len:]], device=self.device)
+            cache_position = torch.arange(cached_len, len(tokens), device=self.device)
+            outputs = self.model(
+                input_ids=new_ids,
+                past_key_values=cached.cache,
+                use_cache=True,
+                cache_position=cache_position,
+            )
+        else:
+            all_ids = torch.tensor([tokens], device=self.device)
+            outputs = self.model(input_ids=all_ids, use_cache=True)
+
+        # Save after a successful forward, before sampling. A downstream
+        # IllegalMoveError doesn't invalidate the cache — it reflects the
+        # tokens we forwarded, and those haven't changed.
+        game.cache = KVCacheState(cache=outputs.past_key_values, tokens=tuple(tokens))
         logits = outputs.logits[0, -1, :]
 
         if use_constrained:
