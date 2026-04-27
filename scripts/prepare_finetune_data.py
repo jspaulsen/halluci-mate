@@ -27,7 +27,7 @@ from halluci_mate.data_preparation import create_tokenizer, passes_highelo_filte
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_NUM_GAMES = 500_000
+DEFAULT_NUM_GAMES = 1_000_000
 DEFAULT_OUTPUT_DIR = Path("data/v1a-highelo")
 DEFAULT_MIN_ELO = 2000
 DEFAULT_MAX_RATING_DIFF = 30

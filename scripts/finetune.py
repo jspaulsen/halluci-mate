@@ -33,7 +33,7 @@ def main(
     batch_size: int = 256
     gradient_accumulation_steps: int = 1
     epochs: int = 1
-    learning_rate: float = 3e-5  # 10x lower than v1a pretrain — fine-tune from warm weights
+    learning_rate: float = 3e-5
     weight_decay: float = 0.01
     base_model: str = "jspaulsen/halluci-mate-v1a"
     tokenizer = ChessTokenizer()
@@ -100,10 +100,10 @@ def main(
             fp16=not torch.cuda.is_bf16_supported(),
             logging_steps=1,
             eval_strategy="steps",
-            eval_steps=500,
+            eval_steps=250,
             save_steps=100,
             save_total_limit=10,
-            optim="adamw_torch_fused",
+            optim="paged_adamw_8bit",
             weight_decay=weight_decay,
             lr_scheduler_type="cosine_with_min_lr",
             lr_scheduler_kwargs={"min_lr": learning_rate * 0.1},
