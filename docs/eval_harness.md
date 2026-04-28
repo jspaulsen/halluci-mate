@@ -270,8 +270,10 @@ generated without re-running games — both come from `vs_stockfish` records.
 ### Phase 2 (legality DPO)
 
 Any per-move record where the unconstrained raw sample was illegal
-(`mask_used` and not `raw_sample_legal`) is a negative example. Pair with
-the constrained (legal) move that was actually played as the positive.
+(`not raw_sample_legal`) is a negative example. Pair with the constrained
+(legal) move that was actually played as the positive. (When `mask_used`
+is false, `raw_sample_move == model_move` and `raw_sample_legal` is true,
+so this condition implicitly skips unmasked records.)
 
 ```
 chosen:   (fen_before, model_move)        # legal, post-mask

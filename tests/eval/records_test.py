@@ -12,63 +12,37 @@ from halluci_mate.eval.records import (
     PerMoveRecord,
     PerPerplexityRecord,
     PerPuzzleRecord,
-    Phase,
     Record,
-    Side,
-    TopKEntry,
     record_from_dict,
     record_to_dict,
 )
-
-PER_MOVE = PerMoveRecord(
-    run_id="2026-04-19T20-15-00_ckpt-9660_vs-stockfish",
-    event_id=0,
-    evaluator=Evaluator.VS_STOCKFISH,
-    checkpoint="runs-v1/marvelous-deer-608/checkpoint-9660",
-    game_id="g0",
-    ply=1,
-    phase=Phase.OPENING,
-    side_to_move=Side.WHITE,
-    model_side=Side.WHITE,
-    fen_before="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-    legal_moves=["e2e4", "d2d4"],
-    model_move="e2e4",
-    model_top_k=[
-        TopKEntry(move="e2e4", logprob=-0.1),
-        TopKEntry(move="d2d4", logprob=-1.2),
-    ],
-    mask_used=True,
-    raw_sample_move="e2e4",
-    raw_sample_legal=True,
-    prior_opponent_move=None,
-    sf_best_move=None,
-    sf_eval_before_cp=None,
-    sf_eval_after_cp=None,
-    centipawn_loss=None,
-    is_blunder=None,
+from tests.eval.conftest import (
+    DEFAULT_CHECKPOINT,
+    START_FEN,
+    make_per_move_record,
+    make_per_puzzle_record,
 )
 
-PER_PUZZLE = PerPuzzleRecord(
-    run_id="2026-04-19T20-15-00_ckpt-9660_puzzles",
+PER_MOVE = make_per_move_record(
+    event_id=0,
+    run_id="2026-04-19T20-15-00_ckpt-9660_vs-stockfish",
+    game_id="g0",
+    ply=1,
+)
+
+PER_PUZZLE = make_per_puzzle_record(
     event_id=42,
-    evaluator=Evaluator.PUZZLES,
-    checkpoint="runs-v1/marvelous-deer-608/checkpoint-9660",
+    run_id="2026-04-19T20-15-00_ckpt-9660_puzzles",
     puzzle_id="abcde",
-    rating=1450,
-    themes=["fork", "mateIn2"],
-    fen="r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3",
-    solution=["f3e5", "c6e5"],
-    model_attempt=["f3e5", "c6e5"],
-    solved=True,
 )
 
 PER_LEGAL_RATE = PerLegalRateRecord(
     run_id="2026-04-19T20-15-00_ckpt-9660_legal-rate",
     event_id=7,
     evaluator=Evaluator.LEGAL_RATE,
-    checkpoint="runs-v1/marvelous-deer-608/checkpoint-9660",
+    checkpoint=DEFAULT_CHECKPOINT,
     position_id="pos-7",
-    fen="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+    fen=START_FEN,
     model_move="e2e4",
     legal=True,
 )
@@ -77,9 +51,9 @@ PER_PERPLEXITY = PerPerplexityRecord(
     run_id="2026-04-19T20-15-00_ckpt-9660_perplexity",
     event_id=3,
     evaluator=Evaluator.PERPLEXITY,
-    checkpoint="runs-v1/marvelous-deer-608/checkpoint-9660",
+    checkpoint=DEFAULT_CHECKPOINT,
     position_id="seq-3",
-    fen="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+    fen=START_FEN,
     token_logprobs=[-0.1, -0.2, -0.3],
 )
 
@@ -110,13 +84,20 @@ def test_record_to_dict_serializes_top_k_as_list_of_dicts() -> None:
     ]
 
 
-def test_record_from_dict_rejects_unknown_shape() -> None:
-    with pytest.raises(ValueError, match="cannot infer record type"):
-        record_from_dict(
-            {
-                "run_id": "x",
-                "event_id": 0,
-                "evaluator": "made_up",
-                "checkpoint": "x",
-            }
-        )
+def test_record_discriminator_keys_are_disjoint() -> None:
+    """The shape-based discriminator is sound only if its four type-specific
+    keys are pairwise disjoint across record classes — otherwise a record
+    that picks a colliding key would silently route to the wrong type and
+    lose payload. This test pins that invariant for future record additions.
+    """
+    discriminator_keys = {
+        PerMoveRecord: "game_id",
+        PerPuzzleRecord: "puzzle_id",
+        PerPerplexityRecord: "token_logprobs",
+        PerLegalRateRecord: "legal",
+    }
+    for owner_cls, key in discriminator_keys.items():
+        for other_cls in discriminator_keys:
+            if other_cls is owner_cls:
+                continue
+            assert key not in other_cls.model_fields, f"discriminator key {key!r} of {owner_cls.__name__} also appears on {other_cls.__name__}"

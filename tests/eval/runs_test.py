@@ -6,14 +6,9 @@ import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from halluci_mate.eval.records import (
-    Evaluator,
-    PerMoveRecord,
-    PerPuzzleRecord,
-    Phase,
-    Side,
-    TopKEntry,
-)
+import pytest
+
+from halluci_mate.eval.records import Evaluator
 from halluci_mate.eval.runs import (
     CONFIG_FILENAME,
     GAMES_PGN_FILENAME,
@@ -23,6 +18,7 @@ from halluci_mate.eval.runs import (
     RunWriter,
     make_run_id,
 )
+from tests.eval.conftest import make_per_move_record, make_per_puzzle_record
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -30,43 +26,28 @@ if TYPE_CHECKING:
 FIXED_NOW = datetime(2026, 4, 19, 20, 15, 0, tzinfo=UTC)
 
 
-def _move_record(event_id: int) -> PerMoveRecord:
-    return PerMoveRecord(
-        run_id="run-x",
-        event_id=event_id,
-        evaluator=Evaluator.VS_STOCKFISH,
-        checkpoint="ckpt",
-        game_id=f"g{event_id}",
-        ply=event_id,
-        phase=Phase.OPENING,
-        side_to_move=Side.WHITE,
-        model_side=Side.WHITE,
-        fen_before="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-        legal_moves=["e2e4"],
-        model_move="e2e4",
-        model_top_k=[TopKEntry(move="e2e4", logprob=-0.1)],
-        mask_used=True,
-        raw_sample_move="e2e4",
-        raw_sample_legal=True,
-        prior_opponent_move=None,
-        sf_best_move=None,
-        sf_eval_before_cp=None,
-        sf_eval_after_cp=None,
-        centipawn_loss=None,
-        is_blunder=None,
-    )
-
-
 def test_make_run_id_formats_components() -> None:
-    run_id = make_run_id("marvelous-deer-608-ckpt9660", "vs-stockfish", now=FIXED_NOW)
+    run_id = make_run_id("marvelous-deer-608-ckpt9660", Evaluator.VS_STOCKFISH, now=FIXED_NOW)
     assert run_id == "2026-04-19T20-15-00_marvelous-deer-608-ckpt9660_vs-stockfish"
 
 
 def test_make_run_id_uses_current_utc_time_when_now_omitted() -> None:
-    run_id = make_run_id("ckpt", "perplexity")
+    run_id = make_run_id("ckpt", Evaluator.PERPLEXITY)
     timestamp, _, _ = run_id.partition("_")
     parsed = datetime.strptime(timestamp, "%Y-%m-%dT%H-%M-%S").replace(tzinfo=UTC)
     assert abs((datetime.now(UTC) - parsed).total_seconds()) < 60
+
+
+def test_make_run_id_uses_hyphenated_evaluator_slug() -> None:
+    """Underscore evaluator names (`vs_stockfish`) must serialize as hyphens
+    in run-ids so the run-id stays splittable on `_`."""
+    run_id = make_run_id("ckpt", Evaluator.LEGAL_RATE, now=FIXED_NOW)
+    assert run_id.endswith("_legal-rate")
+
+
+def test_make_run_id_rejects_underscore_in_checkpoint_tag() -> None:
+    with pytest.raises(ValueError, match="must not contain '_'"):
+        make_run_id("bad_tag", Evaluator.VS_STOCKFISH, now=FIXED_NOW)
 
 
 def test_run_writer_creates_run_directory(tmp_path: Path) -> None:
@@ -96,39 +77,45 @@ def test_run_writer_writes_config_metrics_and_pgn(tmp_path: Path) -> None:
 
 def test_run_writer_appends_records_round_trip(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
-    writer = RunWriter(run_dir)
+    move_a = make_per_move_record(event_id=0)
+    move_b = make_per_move_record(event_id=1)
+    puzzle = make_per_puzzle_record(event_id=2)
 
-    move_a = _move_record(0)
-    move_b = _move_record(1)
-    puzzle = PerPuzzleRecord(
-        run_id="run-x",
-        event_id=2,
-        evaluator=Evaluator.PUZZLES,
-        checkpoint="ckpt",
-        puzzle_id="p1",
-        rating=1500,
-        themes=["fork"],
-        fen="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-        solution=["e2e4"],
-        model_attempt=["e2e4"],
-        solved=True,
-    )
-
-    writer.append_record(move_a)
-    writer.append_record(move_b)
-    writer.append_record(puzzle)
+    with RunWriter(run_dir) as writer:
+        writer.append_record(move_a)
+        writer.append_record(move_b)
+        writer.append_record(puzzle)
 
     reader = RunReader(run_dir)
-    assert list(reader.read_records()) == [move_a, move_b, puzzle]
+    assert reader.read_records() == [move_a, move_b, puzzle]
 
 
 def test_records_jsonl_is_one_record_per_line(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
-    writer = RunWriter(run_dir)
-    writer.append_record(_move_record(0))
-    writer.append_record(_move_record(1))
+    with RunWriter(run_dir) as writer:
+        writer.append_record(make_per_move_record(event_id=0))
+        writer.append_record(make_per_move_record(event_id=1))
 
     lines = (run_dir / RECORDS_FILENAME).read_text(encoding="utf-8").splitlines()
     assert len(lines) == 2
     for line in lines:
         json.loads(line)
+
+
+def test_run_writer_holds_records_file_open_for_run_lifetime(tmp_path: Path) -> None:
+    """Single open per run, not per record — see PR #10 review."""
+    run_dir = tmp_path / "run"
+    with RunWriter(run_dir) as writer:
+        writer.append_record(make_per_move_record(event_id=0))
+        fp = writer._records_fp
+        assert fp is not None
+        assert not fp.closed
+        writer.append_record(make_per_move_record(event_id=1))
+        assert writer._records_fp is fp
+    assert fp.closed
+
+
+def test_run_writer_append_record_outside_context_raises(tmp_path: Path) -> None:
+    writer = RunWriter(tmp_path / "run")
+    with pytest.raises(RuntimeError, match="context manager"):
+        writer.append_record(make_per_move_record(event_id=0))

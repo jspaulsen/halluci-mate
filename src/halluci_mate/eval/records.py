@@ -25,6 +25,15 @@ class Evaluator(StrEnum):
     LEGAL_RATE = "legal_rate"
     PERPLEXITY = "perplexity"
 
+    @property
+    def run_id_tag(self) -> str:
+        """Hyphen-cased form of the evaluator name for use in run-ids.
+
+        Run-ids join components on `_`, so the evaluator slug must use `-`
+        instead of `_` to keep the id round-trippable.
+        """
+        return self.value.replace("_", "-")
+
 
 class Phase(StrEnum):
     OPENING = "opening"
@@ -148,32 +157,27 @@ class PerPerplexityRecord(RecordHeader):
 
 
 def _discriminate_record(value: Any) -> str | None:
-    """Return the variant tag for a record dict or instance, or None.
+    """Return the variant tag for a record dict, or None.
 
-    Discriminator is the presence of a type-specific key, not the `evaluator`
-    string — the schema allows puzzles to optionally emit per-move records,
-    so the evaluator name is not a strict type tag. `legal_rate` and
-    `perplexity` are distinguished by the field unique to each
-    (`legal` vs. `token_logprobs`); both also carry `position_id`, so we
-    do not key on it.
+    Pydantic only invokes this discriminator with dicts (during validation);
+    serialization dispatches on the model class itself. Discriminator is the
+    presence of a type-specific key, not the `evaluator` string — the schema
+    allows puzzles to optionally emit per-move records, so the evaluator name
+    is not a strict type tag. `legal_rate` and `perplexity` are distinguished
+    by the field unique to each (`legal` vs. `token_logprobs`); both also
+    carry `position_id`, so we do not key on it. The four distinguishing
+    keys are pairwise disjoint across record classes — see
+    `tests/eval/records_test.py::test_record_discriminator_keys_are_disjoint`.
     """
-    if isinstance(value, dict):
-        if "game_id" in value:
-            return "per_move"
-        if "puzzle_id" in value:
-            return "per_puzzle"
-        if "token_logprobs" in value:
-            return "per_perplexity"
-        if "legal" in value:
-            return "per_legal_rate"
+    if not isinstance(value, dict):
         return None
-    if isinstance(value, PerMoveRecord):
+    if "game_id" in value:
         return "per_move"
-    if isinstance(value, PerPuzzleRecord):
+    if "puzzle_id" in value:
         return "per_puzzle"
-    if isinstance(value, PerPerplexityRecord):
+    if "token_logprobs" in value:
         return "per_perplexity"
-    if isinstance(value, PerLegalRateRecord):
+    if "legal" in value:
         return "per_legal_rate"
     return None
 
@@ -195,13 +199,5 @@ def record_to_dict(record: Record) -> dict[str, Any]:
 
 
 def record_from_dict(data: dict[str, Any]) -> Record:
-    """Reconstruct a record from a dict, dispatching on shape.
-
-    The discriminator is the presence of a type-specific key (`game_id`,
-    `puzzle_id`, `position_id`), not the `evaluator` string. We pre-check the
-    shape so an unknown record raises a friendly `ValueError` instead of
-    pydantic's lower-level union-tag error.
-    """
-    if _discriminate_record(data) is None:
-        raise ValueError(f"cannot infer record type from keys: {sorted(data)!r}")
+    """Reconstruct a record from a dict, dispatching on shape."""
     return _RECORD_ADAPTER.validate_python(data)
