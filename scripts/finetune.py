@@ -29,13 +29,14 @@ load_dotenv()
 def main(
     warmup_ratio: float = 0.005,
     output_directory: Path = Path("runs-v1a-ft"),
+    base_model: str = "jspaulsen/halluci-mate-v1a",
+    data_dir: Path = Path("data/v1a-highelo"),
 ) -> None:
     batch_size: int = 256
     gradient_accumulation_steps: int = 1
     epochs: int = 1
     learning_rate: float = 3e-5
     weight_decay: float = 0.01
-    base_model: str = "jspaulsen/halluci-mate-v1a"
     tokenizer = ChessTokenizer()
 
     model = AutoModelForCausalLM.from_pretrained(
@@ -44,8 +45,8 @@ def main(
         dtype=torch.bfloat16,
     )
 
-    dataset: Dataset = load_dataset("parquet", data_files="data/v1a-highelo/train.parquet", split="train")
-    eval_dataset: Dataset = load_dataset("parquet", data_files="data/v1a-highelo/eval.parquet", split="train")
+    dataset: Dataset = load_dataset("parquet", data_files=str(data_dir / "train.parquet"), split="train")
+    eval_dataset: Dataset = load_dataset("parquet", data_files=str(data_dir / "eval.parquet"), split="train")
 
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 

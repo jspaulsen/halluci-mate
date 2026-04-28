@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path  # noqa: TC003 — used at runtime via tmp_path
 
+import pytest
 from datasets import Dataset
 
 from halluci_mate.data_preparation import build_stratified_splits, create_tokenizer, passes_highelo_filter, process_game, strip_metadata, write_shard
@@ -166,28 +167,21 @@ def test_build_stratified_splits_covers_strata(tmp_path: Path) -> None:
     assert "black" in eval_results
 
 
-def test_passes_highelo_filter_accepts_clean_game() -> None:
-    assert passes_highelo_filter(_make_highelo_sample(), HIGHELO_MIN, HIGHELO_MAX_RATING_DIFF, HIGHELO_MAX_ELO_GAP)
-
-
-def test_passes_highelo_filter_rejects_white_below_min() -> None:
-    assert not passes_highelo_filter(_make_highelo_sample(white_elo=1999), HIGHELO_MIN, HIGHELO_MAX_RATING_DIFF, HIGHELO_MAX_ELO_GAP)
-
-
-def test_passes_highelo_filter_rejects_black_below_min() -> None:
-    assert not passes_highelo_filter(_make_highelo_sample(black_elo=1500), HIGHELO_MIN, HIGHELO_MAX_RATING_DIFF, HIGHELO_MAX_ELO_GAP)
-
-
-def test_passes_highelo_filter_rejects_large_rating_diff() -> None:
-    assert not passes_highelo_filter(_make_highelo_sample(black_diff=-94), HIGHELO_MIN, HIGHELO_MAX_RATING_DIFF, HIGHELO_MAX_ELO_GAP)
-
-
-def test_passes_highelo_filter_rejects_large_positive_rating_diff() -> None:
-    assert not passes_highelo_filter(_make_highelo_sample(white_diff=50), HIGHELO_MIN, HIGHELO_MAX_RATING_DIFF, HIGHELO_MAX_ELO_GAP)
-
-
-def test_passes_highelo_filter_rejects_large_elo_gap() -> None:
-    assert not passes_highelo_filter(_make_highelo_sample(white_elo=2400, black_elo=2100), HIGHELO_MIN, HIGHELO_MAX_RATING_DIFF, HIGHELO_MAX_ELO_GAP)
+@pytest.mark.parametrize(
+    ("kwargs", "expected"),
+    [
+        ({}, True),
+        ({"white_elo": 1999}, False),
+        ({"black_elo": 1500}, False),
+        ({"black_diff": -94}, False),
+        ({"white_diff": 50}, False),
+        ({"white_elo": 2400, "black_elo": 2100}, False),
+        ({"white_elo": 2000, "black_elo": 2200, "white_diff": 30, "black_diff": -30}, True),
+    ],
+)
+def test_passes_highelo_filter(kwargs: dict, expected: bool) -> None:
+    sample = _make_highelo_sample(**kwargs)
+    assert passes_highelo_filter(sample, HIGHELO_MIN, HIGHELO_MAX_RATING_DIFF, HIGHELO_MAX_ELO_GAP) is expected
 
 
 def test_passes_highelo_filter_rejects_missing_field() -> None:
@@ -200,17 +194,6 @@ def test_passes_highelo_filter_rejects_non_int_field() -> None:
     sample = _make_highelo_sample()
     sample["WhiteElo"] = "?"
     assert not passes_highelo_filter(sample, HIGHELO_MIN, HIGHELO_MAX_RATING_DIFF, HIGHELO_MAX_ELO_GAP)
-
-
-def test_passes_highelo_filter_accepts_boundary_values() -> None:
-    """Values exactly at the limits should pass."""
-    sample = _make_highelo_sample(
-        white_elo=2000,
-        black_elo=2200,
-        white_diff=30,
-        black_diff=-30,
-    )
-    assert passes_highelo_filter(sample, HIGHELO_MIN, HIGHELO_MAX_RATING_DIFF, HIGHELO_MAX_ELO_GAP)
 
 
 def test_strip_metadata_removes_columns() -> None:
