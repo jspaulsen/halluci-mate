@@ -49,6 +49,29 @@ def _parse_elo(sample: dict) -> tuple[int, int] | None:
         return None
 
 
+def passes_highelo_filter(sample: dict, min_elo: int, max_rating_diff: int, max_elo_gap: int) -> bool:
+    """Return True if a game passes the high-Elo + anomaly filter.
+
+    Rejects games where either player is below min_elo, where either rating diff
+    exceeds max_rating_diff in magnitude (provisional / volatile ratings), or
+    where the Elo gap between players exceeds max_elo_gap (off-pool pairings).
+    Games with missing or non-integer fields are rejected.
+    """
+    try:
+        white_elo = int(sample["WhiteElo"])
+        black_elo = int(sample["BlackElo"])
+        white_diff = int(sample["WhiteRatingDiff"])
+        black_diff = int(sample["BlackRatingDiff"])
+    except (ValueError, KeyError, TypeError):
+        return False
+
+    if white_elo < min_elo or black_elo < min_elo:
+        return False
+    if abs(white_diff) > max_rating_diff or abs(black_diff) > max_rating_diff:
+        return False
+    return abs(white_elo - black_elo) <= max_elo_gap
+
+
 def process_game(sample: dict, tokenizer: ChessTokenizer) -> list[dict]:
     """Process a single Lichess game into tokenized training examples with metadata.
 
@@ -75,14 +98,16 @@ def process_game(sample: dict, tokenizer: ChessTokenizer) -> list[dict]:
     results: list[dict] = []
     for seq in sequences:
         encoded = tokenizer(seq, add_special_tokens=False)
-        results.append({
-            "input_ids": encoded["input_ids"],
-            "attention_mask": encoded["attention_mask"],
-            "elo_bucket": elo_bucket,
-            "result": outcome,
-            "opening_family": opening_family,
-            "termination_type": termination_type,
-        })
+        results.append(
+            {
+                "input_ids": encoded["input_ids"],
+                "attention_mask": encoded["attention_mask"],
+                "elo_bucket": elo_bucket,
+                "result": outcome,
+                "opening_family": opening_family,
+                "termination_type": termination_type,
+            }
+        )
     return results
 
 

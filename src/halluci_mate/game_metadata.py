@@ -18,7 +18,6 @@ _ELO_BOUNDARIES: list[tuple[int, str]] = [
 _ELO_TOP_BUCKET = "2000+"
 
 
-
 def classify_elo_bucket(white_elo: int, black_elo: int) -> str:
     """Classify average ELO into a rating bucket."""
     avg = (white_elo + black_elo) // 2

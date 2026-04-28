@@ -27,6 +27,7 @@ from pathlib import Path
 from datasets import load_dataset
 
 from halluci_mate.data_preparation import create_tokenizer, save_splits, stream_and_shard
+from halluci_mate.logging_setup import configure_script_logging
 
 logger = logging.getLogger(__name__)
 
@@ -57,20 +58,8 @@ def prepare_dataset(
     save_splits(shard_dir, total_examples, output_dir)
 
 
-def _configure_logging() -> None:
-    """Configure logging for this script and halluci_mate modules only."""
-    handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-
-    # Configure our loggers without affecting third-party libraries (e.g., HuggingFace)
-    for name in (__name__, "halluci_mate"):
-        log = logging.getLogger(name)
-        log.setLevel(logging.INFO)
-        log.addHandler(handler)
-
-
 def main() -> None:
-    _configure_logging()
+    configure_script_logging(__name__)
 
     parser = argparse.ArgumentParser(description="Prepare Lichess data for training.")
     parser.add_argument("--num-games", type=int, default=DEFAULT_NUM_GAMES, help="Number of games to process")
