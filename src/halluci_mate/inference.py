@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Protocol
 
 import chess
 import torch
 from transformers import AutoModelForCausalLM
 
 from halluci_mate.chess_tokenizer import ChessTokenizer
+from halluci_mate.eval.records import TopKEntry
 from halluci_mate.game import KVCacheState
 
 if TYPE_CHECKING:
@@ -25,6 +27,48 @@ class IllegalMoveError(ValueError):
 
 class GameOverError(ValueError):
     """Caller invoked ``predict`` on a position with no legal moves (checkmate, stalemate)."""
+
+
+@dataclass(frozen=True)
+class MovePrediction:
+    """Per-position inference output, including the data the eval harness needs.
+
+    ``played_move`` is ``None`` when constrained decoding is disabled and the
+    sampled token does not parse as a legal move; in that case the caller can
+    still inspect ``model_move_uci`` and the rest of the metadata.
+
+    ``raw_sample_move_uci`` and ``raw_sample_legal`` always describe the
+    unconstrained top-1 of the raw logits, regardless of ``mask_used`` —
+    these are what Phase 2 legality DPO pairs against ``model_move``.
+
+    ``model_top_k`` comes from the *sampled-from* distribution: post-mask
+    when ``mask_used`` is true, raw otherwise. Empty list when the caller
+    passes ``record_top_k=0``.
+    """
+
+    played_move: chess.Move | None
+    model_move_uci: str
+    raw_sample_move_uci: str
+    raw_sample_legal: bool
+    model_top_k: list[TopKEntry]
+    mask_used: bool
+
+
+class Predictor(Protocol):
+    """Structural type for objects that can produce a ``MovePrediction``.
+
+    Lets the eval harness (and tests) accept any object exposing
+    ``predict_with_metadata`` rather than the concrete ``ChessInferenceEngine``
+    — the only method the harness actually calls.
+    """
+
+    def predict_with_metadata(
+        self,
+        game: Game,
+        *,
+        constrained: bool | None = None,
+        record_top_k: int = 5,
+    ) -> MovePrediction: ...
 
 
 class ChessInferenceEngine:
@@ -85,13 +129,72 @@ class ChessInferenceEngine:
         game: Game,
         constrained: bool | None = None,
     ) -> chess.Move:
-        # TODO(eval-harness): docs/eval_harness.md requires exposing
-        # `raw_sample_legal` (did the unconstrained top-1 land on a legal move?)
-        # and top-k candidates alongside the played move — needed for Phase 2
-        # legality-DPO seed pairs. Extend the return shape when the eval harness
-        # lands; leaving `-> Move` alone for now since nothing else consumes it.
+        """Sample the next move; raise ``IllegalMoveError`` if the sample is not legal."""
+        prediction = self.predict_with_metadata(game, constrained=constrained, record_top_k=0)
+        if prediction.played_move is not None:
+            return prediction.played_move
+        # Reparse the rejected token so the error message distinguishes
+        # "not a valid UCI" (unknown vocab) from "valid UCI but illegal here".
+        token = prediction.model_move_uci
+        if _parse_uci(token) is None:
+            raise IllegalMoveError(f"Model produced token {token!r} which is not a valid UCI move")
+        raise IllegalMoveError(f"Model produced token {token!r} which is not a legal move in position {game.board.fen()}")
+
+    @torch.inference_mode()
+    def predict_with_metadata(
+        self,
+        game: Game,
+        *,
+        constrained: bool | None = None,
+        record_top_k: int = 5,
+    ) -> MovePrediction:
+        """Sample the next move and return both played and unconstrained-top-1 metadata.
+
+        Set ``record_top_k`` to 0 to skip top-K extraction (used by the
+        legacy ``predict`` wrapper).
+        """
         use_constrained = self.constrained if constrained is None else constrained
 
+        raw_logits = self._forward_logits(game)
+
+        raw_top_id = int(torch.argmax(raw_logits).item())
+        raw_top_token = self.tokenizer.convert_ids_to_tokens(raw_top_id)
+        raw_sample_legal = _parse_legal(raw_top_token, game.board) is not None
+
+        if use_constrained:
+            legal_moves = list(game.board.legal_moves)
+            if not legal_moves:
+                raise GameOverError(f"No legal moves available in position: {game.board.fen()}")
+            legal_token_ids = [self.tokenizer.move_to_id(move.uci()) for move in legal_moves]
+            mask = torch.full_like(raw_logits, float("-inf"))
+            mask[torch.tensor(legal_token_ids, device=raw_logits.device)] = 0.0
+            play_logits = raw_logits + mask
+        else:
+            play_logits = raw_logits
+
+        played_token_id = _sample(play_logits, temperature=self.temperature, top_k=self.top_k)
+        played_token = self.tokenizer.convert_ids_to_tokens(int(played_token_id))
+        played_move = _parse_legal(played_token, game.board)
+
+        model_top_k = _extract_top_k(play_logits, self.tokenizer, record_top_k) if record_top_k > 0 else []
+
+        return MovePrediction(
+            played_move=played_move,
+            model_move_uci=played_token,
+            raw_sample_move_uci=raw_top_token,
+            raw_sample_legal=raw_sample_legal,
+            model_top_k=model_top_k,
+            mask_used=use_constrained,
+        )
+
+    def _forward_logits(self, game: Game) -> torch.Tensor:
+        """Run a forward pass for ``game`` and return the next-token logits.
+
+        Updates ``game.cache`` after the forward, before any sampling, so a
+        downstream sampling failure (illegal move on retry, etc.) doesn't
+        leave the cache in a stale state — the cache reflects the tokens
+        actually forwarded.
+        """
         tokens = game.tokenize(self.tokenizer)
         cached = game.cache
         cached_len = len(cached.tokens) if cached is not None else 0
@@ -115,36 +218,8 @@ class ChessInferenceEngine:
             all_ids = torch.tensor([tokens], device=self.device)
             outputs = self.model(input_ids=all_ids, use_cache=True)
 
-        # Save after a successful forward, before sampling. A downstream
-        # IllegalMoveError doesn't invalidate the cache — it reflects the
-        # tokens we forwarded, and those haven't changed.
         game.cache = KVCacheState(cache=outputs.past_key_values, tokens=tuple(tokens))
-        logits = outputs.logits[0, -1, :]
-
-        if use_constrained:
-            legal_moves = list(game.board.legal_moves)
-
-            if not legal_moves:
-                raise GameOverError(f"No legal moves available in position: {game.board.fen()}")
-
-            legal_token_ids = [self.tokenizer.move_to_id(move.uci()) for move in legal_moves]
-
-            mask = torch.full_like(logits, float("-inf"))
-            mask[torch.tensor(legal_token_ids, device=logits.device)] = 0.0
-            logits = logits + mask
-
-        next_token_id = _sample(logits, temperature=self.temperature, top_k=self.top_k)
-        next_token = self.tokenizer.convert_ids_to_tokens(int(next_token_id))
-
-        try:
-            move = chess.Move.from_uci(next_token)
-        except chess.InvalidMoveError:
-            raise IllegalMoveError(f"Model produced token {next_token!r} which is not a valid UCI move") from None
-
-        if not game.is_legal_move(move):
-            raise IllegalMoveError(f"Model produced token {next_token!r} which is not a legal move in position {game.board.fen()}")
-
-        return move
+        return outputs.logits[0, -1, :]
 
 
 def _default_device() -> torch.device:
@@ -167,3 +242,31 @@ def _sample(logits: torch.Tensor, *, temperature: float, top_k: int) -> torch.Te
         chosen = torch.multinomial(torch.softmax(top_vals, dim=-1), num_samples=1)
         return top_idx[chosen].squeeze()
     return torch.multinomial(torch.softmax(scaled, dim=-1), num_samples=1).squeeze()
+
+
+def _parse_uci(token: str) -> chess.Move | None:
+    """Return the parsed move if ``token`` is valid UCI, else ``None``."""
+    try:
+        return chess.Move.from_uci(token)
+    except chess.InvalidMoveError:
+        return None
+
+
+def _parse_legal(token: str, board: chess.Board) -> chess.Move | None:
+    """Return the parsed move if ``token`` is legal in ``board``, else ``None``.
+
+    Used for the *played* move — illegal here is recoverable (the eval harness
+    wants to capture it); raising would force every caller to wrap in try/except.
+    """
+    move = _parse_uci(token)
+    if move is None or move not in board.legal_moves:
+        return None
+    return move
+
+
+def _extract_top_k(logits: torch.Tensor, tokenizer: ChessTokenizer, k: int) -> list[TopKEntry]:
+    """Top-K of ``log_softmax(logits)`` mapped to ``TopKEntry`` records."""
+    log_probs = torch.log_softmax(logits, dim=-1)
+    capped_k = min(k, log_probs.size(-1))
+    top_vals, top_idx = torch.topk(log_probs, k=capped_k)
+    return [TopKEntry(move=tokenizer.convert_ids_to_tokens(int(idx)), logprob=float(val)) for val, idx in zip(top_vals.tolist(), top_idx.tolist(), strict=True)]
