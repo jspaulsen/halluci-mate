@@ -74,6 +74,13 @@ evals/
 `2026-04-19T20-15-00_marvelous-deer-608-ckpt9660_vs-stockfish`. Readable,
 sortable, and unique enough for local use.
 
+**Cross-run analysis groups by `run_id`, not by `checkpoint`.** The
+`checkpoint` field is a free-form path kept for reproducibility; the
+human-readable training-run identifier lives in the `<checkpoint-tag>`
+portion of `run_id` and is what charts should axis on. There is no
+structured checkpoint object on records — that comparison shape (e.g.
+step within a single training run) is not a v1 use case.
+
 **Location**: `evals/` at the repo root, gitignored. Mirrors the existing
 `runs-v1/` layout for training runs.
 
@@ -92,6 +99,11 @@ All records share a small common header; the rest is evaluator-specific.
 
 ### Per-move record (`vs_stockfish`, optionally `puzzles`)
 
+One record per model decision (i.e., only on plies where
+`side_to_move == model_side`), not one per ply. The opponent's reply to
+`model_move` is captured as `prior_opponent_move` on the next record for
+the same `game_id`.
+
 | Field | Type | Notes |
 |-------|------|-------|
 | `game_id` | string | groups moves into a game |
@@ -102,10 +114,11 @@ All records share a small common header; the rest is evaluator-specific.
 | `fen_before` | string | position before the move |
 | `legal_moves` | list[string] | all legal UCI moves from `fen_before` |
 | `model_move` | string | UCI move the model actually played |
-| `model_top_k` | list[{move, logprob}] | top-K model candidates, K configurable |
+| `model_top_k` | list[{move, logprob}] | top-K from the *sampled-from* distribution (post-mask if `mask_used`, else unconstrained); K configurable |
 | `mask_used` | bool | was constrained decoding enabled |
-| `raw_sample_legal` | bool | was the model's unconstrained top-1 legal |
-| `opponent_move` | string \| null | what the opponent played (null on model's turn) |
+| `raw_sample_move` | string | unconstrained top-1; equals `model_move` when `mask_used` is false |
+| `raw_sample_legal` | bool | was `raw_sample_move` legal in `fen_before` |
+| `prior_opponent_move` | string \| null | move at `ply - 1` that produced `fen_before`; null only when model is White and `ply == 0` |
 | `sf_best_move` | string \| null | only if `--sf-analyze` is set |
 | `sf_eval_before_cp` | int \| null | centipawns, white-relative |
 | `sf_eval_after_cp` | int \| null | centipawns, white-relative |
@@ -124,15 +137,27 @@ All records share a small common header; the rest is evaluator-specific.
 | `model_attempt` | list[string] | moves the model played |
 | `solved` | bool | did the attempt match the solution |
 
-### Per-position record (`legal_rate`, `perplexity`)
+### Per-legal-rate record (`legal_rate`)
+
+One unconstrained-prediction-on-a-position event.
 
 | Field | Type | Notes |
 |-------|------|-------|
 | `position_id` | string | source identifier |
 | `fen` | string | position |
 | `model_move` | string | top-1 unconstrained prediction |
-| `legal` | bool | true if `model_move` is legal |
-| `token_logprobs` | list[float] | for `perplexity` only |
+| `legal` | bool | true if `model_move` is legal in `fen` |
+
+### Per-perplexity record (`perplexity`)
+
+One scored continuation. No `model_move`/`legal` here — perplexity does
+not sample from the model, only scores known token sequences.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `position_id` | string | source identifier (sequence id) |
+| `fen` | string | prefix position the continuation is scored against |
+| `token_logprobs` | list[float] | per-token log-probabilities of the actual continuation |
 
 ## Evaluators (v1)
 
@@ -244,18 +269,20 @@ generated without re-running games — both come from `vs_stockfish` records.
 
 ### Phase 2 (legality DPO)
 
-Any per-move record where the unconstrained raw sample was illegal is a
-negative example. Pair with the constrained (legal) move that was actually
-played as the positive.
+Any per-move record where the unconstrained raw sample was illegal
+(`not raw_sample_legal`) is a negative example. Pair with the constrained
+(legal) move that was actually played as the positive. (When `mask_used`
+is false, `raw_sample_move == model_move` and `raw_sample_legal` is true,
+so this condition implicitly skips unmasked records.)
 
 ```
-chosen:   (fen_before, constrained_move)       # legal
-rejected: (fen_before, raw_unconstrained_move) # illegal
+chosen:   (fen_before, model_move)        # legal, post-mask
+rejected: (fen_before, raw_sample_move)   # illegal, unconstrained top-1
 ```
 
-Requires capturing the unconstrained top-1 alongside the played move — record
-field `raw_sample_legal` plus the unconstrained candidate in `model_top_k`
-covers this. Verify the inference layer exposes both.
+`raw_sample_move` carries the rejected move directly so the exporter does
+not depend on the configured top-k size or on whether `model_top_k` was
+captured pre- or post-mask.
 
 ### Phase 3 (quality DPO)
 

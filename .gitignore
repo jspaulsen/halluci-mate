@@ -213,6 +213,9 @@ checkpoints/
 *.safetensors
 *.onnx
 
+# Eval outputs
+evals/
+
 # W&B
 wandb/
 
