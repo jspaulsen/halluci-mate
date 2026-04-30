@@ -1,11 +1,10 @@
 """``vs_stockfish`` evaluator: play N games against Stockfish, emit per-move records.
 
-Migrated from ``scripts/run_vs_stockfish.py`` onto the HAL-5 record/runs APIs.
-Caller manages the inference engine and Stockfish process — keeps the
-evaluator pure (testable with stubs) and matches the prototype's lifecycle.
+Built on the HAL-5 record/runs APIs. Caller manages the inference engine and
+Stockfish process — keeps the evaluator pure (testable with stubs).
 
 Out of scope (separate tickets): Stockfish per-position analysis
-(``--sf-analyze``), the ``scripts/eval.py`` CLI, and metric aggregation.
+(``--sf-analyze``) and metric aggregation.
 """
 
 from __future__ import annotations
@@ -53,7 +52,7 @@ class _StockfishEngine(Protocol):
 
 @dataclass(frozen=True)
 class VsStockfishConfig:
-    """Knobs for ``run_vs_stockfish``. All defaults match the prototype script."""
+    """Knobs for ``run_vs_stockfish``."""
 
     games: int = 2
     halluci_color: HalluciColor = "alternate"

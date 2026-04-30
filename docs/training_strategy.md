@@ -320,6 +320,13 @@ sudo apt install stockfish
 # Or download NNUE version for better speed/accuracy
 ```
 
+## Future directions
+
+- [Inference-time search over LM top-K](inference_search.md) — depth-2 minimax
+  using the LM as policy and a learned/hand-crafted leaf eval. Stacks
+  multiplicatively with Phase 3; out of scope for the three training phases
+  but tracked as a candidate next step.
+
 ## References
 
 - [DPO Paper](https://arxiv.org/abs/2305.18290) - Direct Preference Optimization

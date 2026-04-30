@@ -163,8 +163,9 @@ not sample from the model, only scores known token sequences.
 
 ### `vs_stockfish`
 
-Plays N games against Stockfish at a configured skill/depth. Already
-prototyped in `scripts/run_vs_stockfish.py`; migrate this into the harness.
+Plays N games against Stockfish at a configured skill/depth. Implemented in
+`src/halluci_mate/eval/evaluators/vs_stockfish.py`; driven by the
+`vs-stockfish` subcommand of `scripts/eval.py`.
 
 Flags:
 
@@ -307,8 +308,8 @@ exporter, not the collection records.
 
 1. **Module skeleton.** `src/halluci_mate/eval/{__init__.py, records.py,
    runs.py}`. Record dataclasses, run-directory writer/reader, run-id helper.
-2. **`vs_stockfish` evaluator.** Migrate `scripts/run_vs_stockfish.py` logic
-   into `src/halluci_mate/eval/evaluators/vs_stockfish.py`. Emit per-move
+2. **`vs_stockfish` evaluator.** Implement
+   `src/halluci_mate/eval/evaluators/vs_stockfish.py`. Emit per-move
    records. No Stockfish analysis yet.
 3. **Metrics module.** `compute_win_rate`, `compute_legal_rate` from
    `raw_sample_legal`, basic stratification. `metrics.json` output.
