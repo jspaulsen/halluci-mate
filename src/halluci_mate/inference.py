@@ -131,8 +131,8 @@ class ChessInferenceEngine:
     ) -> chess.Move:
         """Sample the next move; raise ``IllegalMoveError`` if the sample is not legal."""
         prediction = self.predict_with_metadata(game, constrained=constrained, record_top_k=0)
-        if prediction.played_move is not None:
-            return prediction.played_move
+        if (move := prediction.played_move) is not None:
+            return move
         # Reparse the rejected token so the error message distinguishes
         # "not a valid UCI" (unknown vocab) from "valid UCI but illegal here".
         token = prediction.model_move_uci
@@ -161,6 +161,8 @@ class ChessInferenceEngine:
         raw_top_token = self.tokenizer.convert_ids_to_tokens(raw_top_id)
         raw_sample_legal = _parse_legal(raw_top_token, game.board) is not None
 
+        play_logits = raw_logits
+
         if use_constrained:
             legal_moves = list(game.board.legal_moves)
             if not legal_moves:
@@ -169,8 +171,6 @@ class ChessInferenceEngine:
             mask = torch.full_like(raw_logits, float("-inf"))
             mask[torch.tensor(legal_token_ids, device=raw_logits.device)] = 0.0
             play_logits = raw_logits + mask
-        else:
-            play_logits = raw_logits
 
         played_token_id = _sample(play_logits, temperature=self.temperature, top_k=self.top_k)
         played_token = self.tokenizer.convert_ids_to_tokens(int(played_token_id))
