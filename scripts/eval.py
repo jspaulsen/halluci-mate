@@ -26,11 +26,10 @@ from halluci_mate.eval.evaluators.vs_stockfish import (
     run_vs_stockfish,
 )
 from halluci_mate.eval.records import Evaluator
-from halluci_mate.eval.runs import make_run_id
+from halluci_mate.eval.runs import make_run_id, resolve_checkpoint_tag
 from halluci_mate.inference import ChessInferenceEngine
 
 DEFAULT_EVALS_DIR = Path("evals")
-CHECKPOINT_PREFIX = "checkpoint-"
 
 
 def main() -> None:
@@ -53,7 +52,7 @@ def _add_vs_stockfish_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--checkpoint-tag",
         default=None,
-        help="Tag used in run-id; defaults to a sanitized form of --checkpoint. May not contain '_'.",
+        help="Tag used in run-id; defaults to a sanitized form of --checkpoint. User-supplied tags must not contain '_'.",
     )
     parser.add_argument("--evals-dir", type=Path, default=DEFAULT_EVALS_DIR, help=f"Parent directory for run outputs (default: {DEFAULT_EVALS_DIR}).")
     parser.add_argument("--stockfish", default="stockfish", help="Path to the stockfish binary (default: 'stockfish' on PATH).")
@@ -89,14 +88,12 @@ def _run_vs_stockfish_cmd(args: argparse.Namespace) -> None:
         stockfish_depth=args.stockfish_depth if args.stockfish_movetime is None else None,
         stockfish_movetime=args.stockfish_movetime,
         max_plies=args.max_plies,
-        temperature=args.temperature,
-        top_k=args.top_k,
         unconstrained=args.unconstrained,
         record_top_k=args.record_top_k,
         blunder_threshold_cp=args.blunder_threshold_cp,
     )
 
-    tag = _resolve_checkpoint_tag(args.checkpoint, args.checkpoint_tag)
+    tag = resolve_checkpoint_tag(args.checkpoint, args.checkpoint_tag)
     run_id = make_run_id(tag, Evaluator.VS_STOCKFISH)
     run_dir = args.evals_dir / run_id
     print(f"Run id: {run_id}")
@@ -110,6 +107,10 @@ def _run_vs_stockfish_cmd(args: argparse.Namespace) -> None:
         device=args.device,
     )
 
+    # Source-of-truth for sampling params is the engine itself; persist its
+    # effective values so the on-disk record can't desync from what was used.
+    extra_config: dict[str, object] = {"temperature": engine.temperature, "top_k": engine.top_k}
+
     stockfish = chess.engine.SimpleEngine.popen_uci(args.stockfish)
     try:
         outcomes = run_vs_stockfish(
@@ -119,33 +120,12 @@ def _run_vs_stockfish_cmd(args: argparse.Namespace) -> None:
             run_dir=run_dir,
             run_id=run_id,
             checkpoint=str(args.checkpoint),
+            extra_config=extra_config,
         )
     finally:
         stockfish.quit()
 
     _print_summary(outcomes, run_dir)
-
-
-def _resolve_checkpoint_tag(checkpoint: str, override: str | None) -> str:
-    raw = override if override is not None else _derive_checkpoint_tag(checkpoint)
-    return raw.replace("_", "-")
-
-
-def _derive_checkpoint_tag(checkpoint: str) -> str:
-    """Build a default ``checkpoint_tag`` for the run-id.
-
-    Local paths shaped like ``<run>/checkpoint-<step>`` collapse to
-    ``<run>-ckpt<step>`` so the run-id stays compact. Hugging Face repo ids
-    (``org/name``) reduce to ``name``. Anything else uses the basename.
-    """
-    path = Path(checkpoint)
-    if path.exists() and path.is_dir():
-        last = path.name
-        parent = path.parent.name
-        if last.startswith(CHECKPOINT_PREFIX) and parent:
-            return f"{parent}-ckpt{last.removeprefix(CHECKPOINT_PREFIX)}"
-        return last
-    return checkpoint.split("/")[-1]
 
 
 def _halluci_won(outcome: GameOutcome) -> bool:
