@@ -16,7 +16,9 @@ from halluci_mate.eval.runs import (
     RECORDS_FILENAME,
     RunReader,
     RunWriter,
+    derive_checkpoint_tag,
     make_run_id,
+    resolve_checkpoint_tag,
 )
 from tests.eval.conftest import make_per_move_record, make_per_puzzle_record
 
@@ -119,3 +121,52 @@ def test_run_writer_append_record_outside_context_raises(tmp_path: Path) -> None
     writer = RunWriter(tmp_path / "run")
     with pytest.raises(RuntimeError, match="context manager"):
         writer.append_record(make_per_move_record(event_id=0))
+
+
+def test_derive_checkpoint_tag_collapses_local_checkpoint_dir(tmp_path: Path) -> None:
+    ckpt = tmp_path / "marvelous-deer-608" / "checkpoint-9660"
+    ckpt.mkdir(parents=True)
+    assert derive_checkpoint_tag(str(ckpt)) == "marvelous-deer-608-ckpt9660"
+
+
+def test_derive_checkpoint_tag_uses_basename_for_plain_dir(tmp_path: Path) -> None:
+    ckpt = tmp_path / "some-run"
+    ckpt.mkdir()
+    assert derive_checkpoint_tag(str(ckpt)) == "some-run"
+
+
+def test_derive_checkpoint_tag_reduces_hf_repo_id() -> None:
+    assert derive_checkpoint_tag("jspaulsen/halluci-mate-v1a") == "halluci-mate-v1a"
+
+
+def test_derive_checkpoint_tag_prefers_hf_shape_over_local_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A repo id like ``org/name`` must not be misclassified as a local path
+    when a coincidentally-named directory exists relative to cwd."""
+    repo = "jspaulsen/halluci-mate-v1a"
+    (tmp_path / "jspaulsen" / "halluci-mate-v1a").mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+    assert derive_checkpoint_tag(repo) == "halluci-mate-v1a"
+
+
+def test_derive_checkpoint_tag_unknown_string_falls_back_to_basename() -> None:
+    assert derive_checkpoint_tag("nonexistent/path/to/thing") == "thing"
+
+
+def test_resolve_checkpoint_tag_uses_override_when_provided() -> None:
+    assert resolve_checkpoint_tag("jspaulsen/halluci-mate-v1a", "my-tag") == "my-tag"
+
+
+def test_resolve_checkpoint_tag_rejects_underscore_in_override() -> None:
+    with pytest.raises(ValueError, match="must not contain '_'"):
+        resolve_checkpoint_tag("jspaulsen/halluci-mate-v1a", "my_tag")
+
+
+def test_resolve_checkpoint_tag_silently_rewrites_underscore_in_derived(tmp_path: Path) -> None:
+    """Auto-derived paths (which the user did not type) are silently sanitized."""
+    ckpt = tmp_path / "my_run" / "checkpoint-100"
+    ckpt.mkdir(parents=True)
+    assert resolve_checkpoint_tag(str(ckpt), None) == "my-run-ckpt100"
+
+
+def test_resolve_checkpoint_tag_passes_through_clean_derived() -> None:
+    assert resolve_checkpoint_tag("jspaulsen/halluci-mate-v1a", None) == "halluci-mate-v1a"

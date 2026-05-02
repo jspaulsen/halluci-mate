@@ -1,11 +1,10 @@
 """``vs_stockfish`` evaluator: play N games against Stockfish, emit per-move records.
 
-Migrated from ``scripts/run_vs_stockfish.py`` onto the HAL-5 record/runs APIs.
-Caller manages the inference engine and Stockfish process — keeps the
-evaluator pure (testable with stubs) and matches the prototype's lifecycle.
+Built on the HAL-5 record/runs APIs. Caller manages the inference engine and
+Stockfish process — keeps the evaluator pure (testable with stubs).
 
 Out of scope (separate tickets): Stockfish per-position analysis
-(``--sf-analyze``), the ``scripts/eval.py`` CLI, and metric aggregation.
+(``--sf-analyze``) and metric aggregation.
 """
 
 from __future__ import annotations
@@ -53,7 +52,7 @@ class _StockfishEngine(Protocol):
 
 @dataclass(frozen=True)
 class VsStockfishConfig:
-    """Knobs for ``run_vs_stockfish``. All defaults match the prototype script."""
+    """Knobs for ``run_vs_stockfish``."""
 
     games: int = 2
     halluci_color: HalluciColor = "alternate"
@@ -61,8 +60,6 @@ class VsStockfishConfig:
     stockfish_depth: int | None = 1
     stockfish_movetime: float | None = None
     max_plies: int = 400
-    temperature: float = 0.0
-    top_k: int = 0
     unconstrained: bool = False
     record_top_k: int = 5
     blunder_threshold_cp: int = 200
@@ -118,17 +115,23 @@ def run_vs_stockfish(
     run_dir: Path,
     run_id: str,
     checkpoint: str,
+    extra_config: dict[str, object] | None = None,
 ) -> list[GameOutcome]:
     """Play ``config.games`` games and write a HAL-5 run directory under ``run_dir``.
 
     Caller manages the lifecycle of ``engine`` and ``stockfish``. Stockfish's
     ``Skill Level`` is configured here before any games begin.
+
+    ``extra_config`` is merged into the on-disk ``config.json`` payload — the
+    CLI uses this to record the engine's effective sampling parameters
+    (``temperature`` / ``top_k``) without duplicating them on
+    ``VsStockfishConfig``, where the evaluator would never read them.
     """
     stockfish.configure({"Skill Level": config.stockfish_skill})
     limit = config.stockfish_limit()
 
     writer = RunWriter(run_dir)
-    writer.write_config(_build_config_payload(config=config, run_id=run_id, checkpoint=checkpoint))
+    writer.write_config(_build_config_payload(config=config, run_id=run_id, checkpoint=checkpoint, extra=extra_config))
 
     outcomes: list[GameOutcome] = []
     event_id = 0
@@ -155,13 +158,15 @@ def run_vs_stockfish(
     return outcomes
 
 
-def _build_config_payload(*, config: VsStockfishConfig, run_id: str, checkpoint: str) -> dict[str, object]:
+def _build_config_payload(*, config: VsStockfishConfig, run_id: str, checkpoint: str, extra: dict[str, object] | None) -> dict[str, object]:
     payload: dict[str, object] = {
         "evaluator": Evaluator.VS_STOCKFISH.value,
         "run_id": run_id,
         "checkpoint": checkpoint,
     }
     payload.update(asdict(config))
+    if extra:
+        payload.update(extra)
     return payload
 
 

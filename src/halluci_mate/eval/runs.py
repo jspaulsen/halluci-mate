@@ -15,12 +15,12 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, Self
 
 from halluci_mate.eval.records import Evaluator, Record, record_from_dict, record_to_dict
 
 if TYPE_CHECKING:
-    from pathlib import Path
     from types import TracebackType
 
 CONFIG_FILENAME = "config.json"
@@ -31,6 +31,8 @@ GAMES_PGN_FILENAME = "games.pgn"
 # Colon is illegal in Windows paths and noisy on Unix shells; the spec uses
 # `T<HH-MM-SS>` for the time component to keep run-ids tool-friendly.
 RUN_ID_TIMESTAMP_FORMAT = "%Y-%m-%dT%H-%M-%S"
+
+CHECKPOINT_PREFIX = "checkpoint-"
 
 
 def make_run_id(checkpoint_tag: str, evaluator: Evaluator, *, now: datetime | None = None) -> str:
@@ -46,6 +48,55 @@ def make_run_id(checkpoint_tag: str, evaluator: Evaluator, *, now: datetime | No
         raise ValueError(f"checkpoint_tag must not contain '_'; got {checkpoint_tag!r}")
     timestamp = (now or datetime.now(UTC)).strftime(RUN_ID_TIMESTAMP_FORMAT)
     return f"{timestamp}_{checkpoint_tag}_{evaluator.run_id_tag}"
+
+
+def derive_checkpoint_tag(checkpoint: str) -> str:
+    """Build a default ``checkpoint_tag`` for the run-id.
+
+    Hugging Face repo ids (``org/name`` shape — exactly one ``/``, no leading
+    ``.`` / ``/``, no ``\\``) reduce to ``name``. Local paths shaped like
+    ``<run>/checkpoint-<step>`` collapse to ``<run>-ckpt<step>`` so the
+    run-id stays compact. Anything else uses the basename.
+
+    The HF heuristic is checked before the on-disk path lookup so a repo id
+    like ``org/name`` is not misclassified as a local directory if a
+    same-named directory happens to exist relative to ``cwd``.
+    """
+    if _looks_like_hf_repo_id(checkpoint):
+        return checkpoint.split("/")[-1]
+    path = Path(checkpoint)
+    if path.is_dir() and path.name.startswith(CHECKPOINT_PREFIX) and path.parent.name:
+        return f"{path.parent.name}-ckpt{path.name.removeprefix(CHECKPOINT_PREFIX)}"
+    return path.name
+
+
+def resolve_checkpoint_tag(checkpoint: str, override: str | None) -> str:
+    """Pick the tag for a run-id, enforcing the no-``_`` invariant.
+
+    A user-supplied ``override`` containing ``_`` is rejected loudly to keep
+    the contract with ``make_run_id`` legible (the help text promises
+    ``--checkpoint-tag`` may not contain ``_``). Auto-derived tags coming
+    from ``derive_checkpoint_tag`` may legitimately contain ``_`` (e.g. a
+    run dir named ``my_run``); for those we silently rewrite ``_`` to ``-``
+    rather than failing on a path the user did not type.
+    """
+    if override is not None:
+        if "_" in override:
+            raise ValueError(f"checkpoint_tag override must not contain '_'; got {override!r}")
+        return override
+    return derive_checkpoint_tag(checkpoint).replace("_", "-")
+
+
+def _looks_like_hf_repo_id(checkpoint: str) -> bool:
+    """Return True for inputs shaped like ``org/name`` (HF repo id).
+
+    Exactly one ``/``, no leading ``.`` or ``/``, no ``\\``. Anything else
+    (including absolute paths, relative paths with multiple segments, and
+    Windows-style paths) is treated as a local path candidate.
+    """
+    if not checkpoint or checkpoint[0] in (".", "/") or "\\" in checkpoint:
+        return False
+    return checkpoint.count("/") == 1
 
 
 class RunWriter:
