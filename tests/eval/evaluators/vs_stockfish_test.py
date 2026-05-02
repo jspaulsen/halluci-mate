@@ -22,7 +22,7 @@ from halluci_mate.eval.evaluators.vs_stockfish import (
     _phase_for_ply,
     run_vs_stockfish,
 )
-from halluci_mate.eval.records import Evaluator, PerMoveRecord, Phase, Side, TopKEntry
+from halluci_mate.eval.records import Evaluator, PerGameRecord, PerMoveRecord, Phase, Side, TopKEntry
 from halluci_mate.eval.runs import CONFIG_FILENAME, GAMES_PGN_FILENAME, RECORDS_FILENAME, RunReader
 from halluci_mate.inference import MovePrediction
 from tests.eval.conftest import DEFAULT_CHECKPOINT, DEFAULT_RUN_ID
@@ -76,9 +76,12 @@ class _StubStockfish:
 
 def _read_records(run_dir: Path) -> list[PerMoveRecord]:
     records = RunReader(run_dir).read_records()
-    assert all(isinstance(r, PerMoveRecord) for r in records)
-    # The narrowing for type-checkers; pytest already asserted instance.
+    assert all(isinstance(r, PerMoveRecord | PerGameRecord) for r in records)
     return [r for r in records if isinstance(r, PerMoveRecord)]
+
+
+def _read_game_records(run_dir: Path) -> list[PerGameRecord]:
+    return [r for r in RunReader(run_dir).read_records() if isinstance(r, PerGameRecord)]
 
 
 def test_runs_one_game_end_to_end(tmp_path: Path) -> None:
@@ -196,6 +199,27 @@ def test_terminates_on_max_plies(tmp_path: Path) -> None:
 
     assert outcomes[0].termination == "max-plies"
     assert outcomes[0].result == "*"
+
+
+def test_emits_per_game_record(tmp_path: Path) -> None:
+    """Each game writes a terminal `PerGameRecord` summarizing its outcome."""
+    run_dir = tmp_path / "run"
+    config = VsStockfishConfig(games=2, max_plies=2, halluci_color="alternate")
+
+    run_vs_stockfish(
+        engine=_StubEngine(),
+        stockfish=_StubStockfish(),
+        config=config,
+        run_dir=run_dir,
+        run_id=DEFAULT_RUN_ID,
+        checkpoint=DEFAULT_CHECKPOINT,
+    )
+
+    game_records = _read_game_records(run_dir)
+    assert [g.game_id for g in game_records] == ["game-0000", "game-0001"]
+    assert [g.model_side for g in game_records] == [Side.WHITE, Side.BLACK]
+    assert all(g.termination == "max-plies" for g in game_records)
+    assert all(g.result == "*" for g in game_records)
 
 
 def test_terminates_on_illegal_move(tmp_path: Path) -> None:

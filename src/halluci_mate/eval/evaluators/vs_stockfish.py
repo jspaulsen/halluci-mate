@@ -16,7 +16,7 @@ import chess
 import chess.engine
 import chess.pgn
 
-from halluci_mate.eval.records import Evaluator, PerMoveRecord, Phase, Side
+from halluci_mate.eval.records import Evaluator, PerGameRecord, PerMoveRecord, Phase, Side
 from halluci_mate.eval.runs import RunWriter
 from halluci_mate.game import Game, Perspective
 
@@ -151,6 +151,20 @@ def run_vs_stockfish(
                 event_id_start=event_id,
             )
             outcomes.append(outcome)
+            writer.append_record(
+                PerGameRecord(
+                    run_id=run_id,
+                    event_id=event_id,
+                    evaluator=Evaluator.VS_STOCKFISH,
+                    checkpoint=checkpoint,
+                    game_id=outcome.game_id,
+                    model_side=_side_for_color(color),
+                    result=outcome.result,
+                    termination=outcome.termination,
+                    ply_count=outcome.ply_count,
+                )
+            )
+            event_id += 1
 
     # `write_pgn` writes a whole file; it does not use the records-jsonl
     # handle held by the `with writer:` block above.

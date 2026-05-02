@@ -116,6 +116,27 @@ class PerMoveRecord(RecordHeader):
     is_blunder: bool | None
 
 
+class PerGameRecord(RecordHeader):
+    """Terminal summary for one game in a `vs_stockfish` run.
+
+    Per-move records describe individual model decisions; aggregating
+    win/draw/loss requires terminal information that does not appear on any
+    single move (the game can end on the opponent's reply, on max-plies, or
+    on an illegal model move). Capturing that summary as a record keeps the
+    metrics module a pure function over `records.jsonl` — no PGN parsing or
+    config reading needed for win-rate aggregation.
+
+    Emitted once per game by the evaluator, after the last per-move record
+    for that game.
+    """
+
+    game_id: str
+    model_side: Side
+    result: str
+    termination: str
+    ply_count: int
+
+
 class PerPuzzleRecord(RecordHeader):
     """A single puzzle attempt."""
 
@@ -163,16 +184,19 @@ def _discriminate_record(value: Any) -> str | None:
     serialization dispatches on the model class itself. Discriminator is the
     presence of a type-specific key, not the `evaluator` string — the schema
     allows puzzles to optionally emit per-move records, so the evaluator name
-    is not a strict type tag. `legal_rate` and `perplexity` are distinguished
-    by the field unique to each (`legal` vs. `token_logprobs`); both also
-    carry `position_id`, so we do not key on it. The four distinguishing
-    keys are pairwise disjoint across record classes — see
-    `tests/eval/records_test.py::test_record_discriminator_keys_are_disjoint`.
+    is not a strict type tag. `PerMoveRecord` and `PerGameRecord` both carry
+    `game_id` (a per-move record summarizes one decision *within* a game; a
+    per-game record summarizes the outcome of the game itself), so they are
+    distinguished by the field unique to each: `ply` vs. `result`. The
+    chosen distinguishing keys are pairwise disjoint across record classes
+    — see `tests/eval/records_test.py::test_record_discriminator_keys_are_disjoint`.
     """
     if not isinstance(value, dict):
         return None
-    if "game_id" in value:
+    if "ply" in value:
         return "per_move"
+    if "result" in value:
+        return "per_game"
     if "puzzle_id" in value:
         return "per_puzzle"
     if "token_logprobs" in value:
@@ -184,6 +208,7 @@ def _discriminate_record(value: Any) -> str | None:
 
 Record = Annotated[
     Annotated[PerMoveRecord, Tag("per_move")]
+    | Annotated[PerGameRecord, Tag("per_game")]
     | Annotated[PerPuzzleRecord, Tag("per_puzzle")]
     | Annotated[PerLegalRateRecord, Tag("per_legal_rate")]
     | Annotated[PerPerplexityRecord, Tag("per_perplexity")],
