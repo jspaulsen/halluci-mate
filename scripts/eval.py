@@ -1,8 +1,14 @@
 """halluci-mate eval harness CLI.
 
-Single entry point for running evaluators against a checkpoint. Today only the
-``vs-stockfish`` subcommand is wired up; additional subcommands will land per
-the build order in ``docs/eval_harness.md``.
+Single entry point for running evaluators against a checkpoint and for
+recomputing aggregates over an existing run directory. Wired-up subcommands:
+
+* ``vs-stockfish`` — play N games against Stockfish, write the HAL-5 run
+  directory, and aggregate ``metrics.json`` via ``compute_all``.
+* ``report <run-id>`` — recompute ``metrics.json`` from an existing
+  ``records.jsonl`` + ``config.json``. No re-run.
+
+Additional evaluators land per the build order in ``docs/eval_harness.md``.
 
 The ``--checkpoint`` argument accepts either a local checkpoint directory
 (e.g. ``runs-v1/marvelous-deer-608/checkpoint-9660``) or a Hugging Face repo
@@ -25,14 +31,16 @@ from halluci_mate.eval.evaluators.vs_stockfish import (
     VsStockfishConfig,
     run_vs_stockfish,
 )
+from halluci_mate.eval.metrics import compute_all
 from halluci_mate.eval.records import Evaluator
-from halluci_mate.eval.runs import make_run_id, resolve_checkpoint_tag
+from halluci_mate.eval.runs import RunReader, RunWriter, make_run_id, resolve_checkpoint_tag
 from halluci_mate.inference import ChessInferenceEngine
 
 DEFAULT_EVALS_DIR = Path("evals")
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    """CLI entry point. ``argv`` is exposed for in-process smoke tests."""
     parser = argparse.ArgumentParser(description="halluci-mate eval harness CLI.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -43,7 +51,14 @@ def main() -> None:
     _add_vs_stockfish_args(vs_parser)
     vs_parser.set_defaults(func=_run_vs_stockfish_cmd)
 
-    args = parser.parse_args()
+    report_parser = subparsers.add_parser(
+        "report",
+        help="Recompute metrics.json from an existing run directory's records.jsonl.",
+    )
+    _add_report_args(report_parser)
+    report_parser.set_defaults(func=_run_report_cmd)
+
+    args = parser.parse_args(argv)
     args.func(args)
 
 
@@ -125,7 +140,38 @@ def _run_vs_stockfish_cmd(args: argparse.Namespace) -> None:
     finally:
         stockfish.quit()
 
+    _aggregate_metrics(run_dir)
     _print_summary(outcomes, run_dir)
+
+
+def _add_report_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("run_id", help="Run id under --evals-dir; the run directory must already contain records.jsonl and config.json.")
+    parser.add_argument("--evals-dir", type=Path, default=DEFAULT_EVALS_DIR, help=f"Parent directory holding the run (default: {DEFAULT_EVALS_DIR}).")
+
+
+def _run_report_cmd(args: argparse.Namespace) -> None:
+    run_dir = args.evals_dir / args.run_id
+    if not run_dir.is_dir():
+        raise FileNotFoundError(f"run directory not found: {run_dir}")
+    metrics = _aggregate_metrics(run_dir)
+    print(f"Wrote metrics.json for {args.run_id}")
+    print(f"  evaluator: {metrics.get('evaluator')}")
+
+
+def _aggregate_metrics(run_dir: Path) -> dict[str, object]:
+    """Read records + config from ``run_dir``, compute aggregates, write ``metrics.json``.
+
+    Shared by ``vs-stockfish`` (after a fresh run) and ``report`` (over an
+    existing run). Reading records back from disk rather than threading them
+    through the evaluator keeps the contract identical in both paths: the
+    on-disk ``records.jsonl`` is the single input to ``compute_all``.
+    """
+    reader = RunReader(run_dir)
+    config = reader.read_config()
+    records = reader.read_records()
+    metrics = compute_all(records, config)
+    RunWriter(run_dir).write_metrics(metrics)
+    return metrics
 
 
 def _halluci_won(outcome: GameOutcome) -> bool:
