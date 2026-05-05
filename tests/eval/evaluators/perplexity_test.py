@@ -44,11 +44,9 @@ class _UniformModel:
     def __init__(self, vocab_size: int) -> None:
         self.vocab_size = vocab_size
         self.calls = 0
-        self.last_input_shape: tuple[int, ...] | None = None
 
     def __call__(self, *, input_ids: torch.Tensor) -> _ModelOutput:
         self.calls += 1
-        self.last_input_shape = tuple(input_ids.shape)
         batch, seq_len = input_ids.shape
         # Uniform logits → log_softmax = -log(vocab) for every token.
         logits = torch.zeros((batch, seq_len, self.vocab_size))
