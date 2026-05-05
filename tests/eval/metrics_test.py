@@ -20,7 +20,7 @@ from halluci_mate.eval.metrics import (
     compute_win_rate,
 )
 from halluci_mate.eval.records import Evaluator, Phase, Record, Side
-from tests.eval.conftest import (
+from tests.helpers.eval_records import (
     make_per_game_record,
     make_per_legal_rate_record,
     make_per_move_record,

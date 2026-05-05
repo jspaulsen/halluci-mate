@@ -20,7 +20,7 @@ from halluci_mate.eval.runs import (
     make_run_id,
     resolve_checkpoint_tag,
 )
-from tests.eval.conftest import make_per_move_record, make_per_puzzle_record
+from tests.helpers.eval_records import make_per_move_record, make_per_puzzle_record
 
 if TYPE_CHECKING:
     from pathlib import Path

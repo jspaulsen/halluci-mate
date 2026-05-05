@@ -17,7 +17,7 @@ from halluci_mate.eval.records import (
     record_from_dict,
     record_to_dict,
 )
-from tests.eval.conftest import (
+from tests.helpers.eval_records import (
     DEFAULT_CHECKPOINT,
     START_FEN,
     make_per_game_record,

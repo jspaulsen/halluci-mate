@@ -29,7 +29,7 @@ from halluci_mate.eval.runs import (
     make_run_id,
 )
 from halluci_mate.inference import MovePrediction
-from tests.eval.conftest import DEFAULT_CHECKPOINT, make_per_game_record, make_per_move_record
+from tests.helpers.eval_records import DEFAULT_CHECKPOINT, make_per_game_record, make_per_move_record
 
 if TYPE_CHECKING:
     from pathlib import Path

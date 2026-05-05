@@ -1,9 +1,10 @@
-"""Shared eval-record fixtures.
+"""Shared eval-record builder factories.
 
-Lifted from `records_test.py` and `runs_test.py` so both suites can build
-records without duplicating the long constructor argument lists. Builders
-take an `event_id` plus arbitrary keyword overrides (validated by pydantic),
-so individual tests can pin only the fields they care about.
+Lifted out of `tests/eval/conftest.py` so suites under any subdirectory of
+`tests/` (including `tests/scripts/`) can build records without importing
+across pytest collection roots. Builders take an `event_id` plus arbitrary
+keyword overrides (validated by pydantic), so individual tests can pin only
+the fields they care about.
 """
 
 from __future__ import annotations

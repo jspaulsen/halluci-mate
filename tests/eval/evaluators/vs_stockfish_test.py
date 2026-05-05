@@ -25,7 +25,7 @@ from halluci_mate.eval.evaluators.vs_stockfish import (
 from halluci_mate.eval.records import Evaluator, PerGameRecord, PerMoveRecord, Phase, Side, TopKEntry
 from halluci_mate.eval.runs import CONFIG_FILENAME, GAMES_PGN_FILENAME, RECORDS_FILENAME, RunReader
 from halluci_mate.inference import MovePrediction
-from tests.eval.conftest import DEFAULT_CHECKPOINT, DEFAULT_RUN_ID
+from tests.helpers.eval_records import DEFAULT_CHECKPOINT, DEFAULT_RUN_ID
 
 if TYPE_CHECKING:
     from pathlib import Path

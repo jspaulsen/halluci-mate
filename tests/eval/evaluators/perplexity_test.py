@@ -22,7 +22,7 @@ from halluci_mate.eval.evaluators.perplexity import (
 )
 from halluci_mate.eval.records import Evaluator, PerPerplexityRecord
 from halluci_mate.eval.runs import CONFIG_FILENAME, RECORDS_FILENAME, RunReader
-from tests.eval.conftest import DEFAULT_CHECKPOINT, DEFAULT_RUN_ID
+from tests.helpers.eval_records import DEFAULT_CHECKPOINT, DEFAULT_RUN_ID
 
 if TYPE_CHECKING:
     from pathlib import Path
