@@ -120,6 +120,12 @@ def _build_config_payload(*, config: LegalRateConfig, run_id: str, checkpoint: s
         value = payload.get(key)
         if value is not None:
             payload[key] = str(value)
+    if config.sample_from_games_path is None:
+        # ``sample_n``/``seed`` only carry meaning under the PGN-sampling source;
+        # drop them from the on-disk payload so a FEN-source diff isn't muddied
+        # by their no-op defaults.
+        payload.pop("sample_n", None)
+        payload.pop("seed", None)
     if extra:
         payload.update(extra)
     return payload

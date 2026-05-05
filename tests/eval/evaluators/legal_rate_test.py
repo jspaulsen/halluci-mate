@@ -117,6 +117,10 @@ def test_positions_file_emits_one_record_per_fen(tmp_path: Path) -> None:
     assert config_payload["evaluator"] == Evaluator.LEGAL_RATE.value
     assert config_payload["positions_path"] == str(fen_file)
     assert config_payload["sample_from_games_path"] is None
+    # ``sample_n``/``seed`` are PGN-only knobs and would just be noise in
+    # diffs between FEN-source runs; they must not appear in the payload.
+    assert "sample_n" not in config_payload
+    assert "seed" not in config_payload
 
 
 def test_records_legal_false_when_engine_returns_illegal(tmp_path: Path) -> None:
