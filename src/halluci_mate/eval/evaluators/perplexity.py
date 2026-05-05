@@ -186,8 +186,6 @@ def _iter_sequences(path: Path, *, max_sequences: int | None) -> Iterator[dict[s
                 row = json.loads(line)
             except json.JSONDecodeError as exc:
                 raise ValueError(f"{path}:{lineno}: invalid JSON: {exc}") from exc
-            if not isinstance(row, dict):
-                raise ValueError(f"{path}:{lineno}: perplexity input row must be a JSON object; got {type(row).__name__}: {row!r}")
             try:
                 _validate_row(row)
             except ValueError as exc:
@@ -198,7 +196,9 @@ def _iter_sequences(path: Path, *, max_sequences: int | None) -> Iterator[dict[s
                 return
 
 
-def _validate_row(row: dict[str, Any]) -> None:
+def _validate_row(row: Any) -> None:
+    if not isinstance(row, dict):
+        raise ValueError(f"perplexity input row must be a JSON object; got {type(row).__name__}: {row!r}")
     for required in ("id", "perspective", "moves"):
         if required not in row:
             raise ValueError(f"perplexity input row missing required field {required!r}: {row!r}")
