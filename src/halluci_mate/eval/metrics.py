@@ -180,9 +180,9 @@ def _compute_vs_stockfish(records: list[Record], config: dict[str, Any]) -> dict
         "stockfish_skill": config.get(_CONFIG_STOCKFISH_SKILL_KEY),
         "win_rate": asdict(compute_win_rate(records)),
         "legal_rate": {
-            "overall": asdict(_legal_rate_bucket(moves)),
-            "by_phase": {phase.value: asdict(_legal_rate_bucket([m for m in moves if m.phase == phase])) for phase in Phase},
-            "by_model_side": {side.value: asdict(_legal_rate_bucket([m for m in moves if m.model_side == side])) for side in Side},
+            "overall": asdict(_legal_rate_tally(moves)),
+            "by_phase": {phase.value: asdict(_legal_rate_tally([m for m in moves if m.phase == phase])) for phase in Phase},
+            "by_model_side": {side.value: asdict(_legal_rate_tally([m for m in moves if m.model_side == side])) for side in Side},
         },
     }
 
@@ -221,9 +221,3 @@ def _classify_game(game: PerGameRecord) -> str:
         return "draw"
     halluci_won = (game.result == "1-0" and game.model_side == Side.WHITE) or (game.result == "0-1" and game.model_side == Side.BLACK)
     return "win" if halluci_won else "loss"
-
-
-def _legal_rate_bucket(moves: list[PerMoveRecord]) -> LegalRateBucket:
-    legal = sum(m.raw_sample_legal for m in moves)
-    rate = legal / len(moves) if moves else 0.0
-    return LegalRateBucket(n=len(moves), legal=legal, rate=rate)
