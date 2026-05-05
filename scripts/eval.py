@@ -5,6 +5,9 @@ recomputing aggregates over an existing run directory. Wired-up subcommands:
 
 * ``vs-stockfish`` — play N games against Stockfish, write the HAL-5 run
   directory, and aggregate ``metrics.json`` via ``compute_all``.
+* ``legal-rate`` — run the model unconstrained on a set of positions
+  (FENs or PGN-sampled) and record top-1 legality.
+* ``perplexity`` — token-level cross-entropy on held-out game sequences.
 * ``report <run-id>`` — recompute ``metrics.json`` from an existing
   ``records.jsonl`` + ``config.json``. No re-run.
 
@@ -20,10 +23,13 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from typing import Any, cast
 
 import chess
 import chess.engine
 
+from halluci_mate.eval.evaluators.legal_rate import LegalRateConfig, run_legal_rate
+from halluci_mate.eval.evaluators.perplexity import PerplexityConfig, run_perplexity
 from halluci_mate.eval.evaluators.vs_stockfish import (
     STOCKFISH_SKILL_MAX,
     STOCKFISH_SKILL_MIN,
@@ -37,6 +43,7 @@ from halluci_mate.eval.runs import RunReader, RunWriter, make_run_id, resolve_ch
 from halluci_mate.inference import ChessInferenceEngine
 
 DEFAULT_EVALS_DIR = Path("evals")
+DEFAULT_LEGAL_RATE_SAMPLE_N = 10_000
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -50,6 +57,20 @@ def main(argv: list[str] | None = None) -> None:
     )
     _add_vs_stockfish_args(vs_parser)
     vs_parser.set_defaults(func=_run_vs_stockfish_cmd)
+
+    legal_parser = subparsers.add_parser(
+        "legal-rate",
+        help="Run the model unconstrained on a set of positions and record top-1 legality.",
+    )
+    _add_legal_rate_args(legal_parser)
+    legal_parser.set_defaults(func=_run_legal_rate_cmd)
+
+    perp_parser = subparsers.add_parser(
+        "perplexity",
+        help="Score held-out game sequences and emit per-position token logprobs.",
+    )
+    _add_perplexity_args(perp_parser)
+    perp_parser.set_defaults(func=_run_perplexity_cmd)
 
     report_parser = subparsers.add_parser(
         "report",
@@ -142,6 +163,115 @@ def _run_vs_stockfish_cmd(args: argparse.Namespace) -> None:
 
     _aggregate_metrics(run_dir)
     _print_summary(outcomes, run_dir)
+
+
+def _add_legal_rate_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--checkpoint", required=True, help="Local checkpoint directory or Hugging Face repo id.")
+    parser.add_argument(
+        "--checkpoint-tag",
+        default=None,
+        help="Tag used in run-id; defaults to a sanitized form of --checkpoint. User-supplied tags must not contain '_'.",
+    )
+    parser.add_argument("--evals-dir", type=Path, default=DEFAULT_EVALS_DIR, help=f"Parent directory for run outputs (default: {DEFAULT_EVALS_DIR}).")
+    parser.add_argument("--device", default=None, help="Torch device (default: cuda if available, else cpu).")
+
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--positions", type=Path, default=None, help="Path to a file with one FEN per line.")
+    source.add_argument(
+        "--sample-from-games",
+        type=Path,
+        default=None,
+        help="Path to a PGN file; positions are reservoir-sampled across all (game, ply) pairs.",
+    )
+    parser.add_argument(
+        "--n",
+        type=int,
+        default=DEFAULT_LEGAL_RATE_SAMPLE_N,
+        help=f"Number of positions to sample from the PGN source (default: {DEFAULT_LEGAL_RATE_SAMPLE_N}). Ignored when --positions is set.",
+    )
+    parser.add_argument("--seed", type=int, default=0, help="Seed for the PGN sampler (default: 0). Ignored when --positions is set.")
+
+
+def _run_legal_rate_cmd(args: argparse.Namespace) -> None:
+    config = LegalRateConfig(
+        positions_path=args.positions,
+        sample_from_games_path=args.sample_from_games,
+        sample_n=args.n,
+        seed=args.seed,
+    )
+
+    tag = resolve_checkpoint_tag(args.checkpoint, args.checkpoint_tag)
+    run_id = make_run_id(tag, Evaluator.LEGAL_RATE)
+    run_dir = args.evals_dir / run_id
+    print(f"Run id: {run_id}")
+    print(f"Run dir: {run_dir}")
+
+    engine = ChessInferenceEngine.from_checkpoint(args.checkpoint, constrained=False, device=args.device)
+
+    n_records = run_legal_rate(
+        engine=engine,
+        config=config,
+        run_dir=run_dir,
+        run_id=run_id,
+        checkpoint=str(args.checkpoint),
+    )
+
+    metrics = _aggregate_metrics(run_dir)
+    rate = _legal_rate_from_metrics(metrics)
+    print("\n=== Summary ===")
+    print(f"Positions scored: {n_records}")
+    print(f"legal_rate:       {rate:.4f}")
+    print(f"Artifacts:        {run_dir}")
+
+
+def _legal_rate_from_metrics(metrics: dict[str, object]) -> float:
+    """Pull the overall legal-rate out of a `compute_all` payload, with a 0.0 fallback."""
+    block = metrics.get("legal_rate")
+    if not isinstance(block, dict):
+        return 0.0
+    rate = cast(dict[str, Any], block).get("rate")
+    return float(rate) if isinstance(rate, (int, float)) else 0.0
+
+
+def _add_perplexity_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--checkpoint", required=True, help="Local checkpoint directory or Hugging Face repo id.")
+    parser.add_argument(
+        "--checkpoint-tag",
+        default=None,
+        help="Tag used in run-id; defaults to a sanitized form of --checkpoint. User-supplied tags must not contain '_'.",
+    )
+    parser.add_argument("--evals-dir", type=Path, default=DEFAULT_EVALS_DIR, help=f"Parent directory for run outputs (default: {DEFAULT_EVALS_DIR}).")
+    parser.add_argument("--device", default=None, help="Torch device (default: cuda if available, else cpu).")
+    parser.add_argument("--data", type=Path, required=True, help="Path to a jsonl file of held-out sequences.")
+    parser.add_argument("--max-sequences", type=int, default=None, help="Stop after this many sequences (default: process all).")
+
+
+def _run_perplexity_cmd(args: argparse.Namespace) -> None:
+    config = PerplexityConfig(data_path=args.data, max_sequences=args.max_sequences)
+
+    tag = resolve_checkpoint_tag(args.checkpoint, args.checkpoint_tag)
+    run_id = make_run_id(tag, Evaluator.PERPLEXITY)
+    run_dir = args.evals_dir / run_id
+    print(f"Run id: {run_id}")
+    print(f"Run dir: {run_dir}")
+
+    engine = ChessInferenceEngine.from_checkpoint(args.checkpoint, constrained=False, device=args.device)
+
+    n_records = run_perplexity(
+        engine=engine,
+        config=config,
+        run_dir=run_dir,
+        run_id=run_id,
+        checkpoint=str(args.checkpoint),
+    )
+
+    metrics = _aggregate_metrics(run_dir)
+    print("\n=== Summary ===")
+    print(f"Sequences scored: {n_records}")
+    print(f"Tokens scored:    {metrics.get('num_tokens', 0)}")
+    print(f"mean NLL:         {metrics.get('mean_nll', 0.0):.4f}")
+    print(f"bits/token:       {metrics.get('bits_per_token', 0.0):.4f}")
+    print(f"Artifacts:        {run_dir}")
 
 
 def _add_report_args(parser: argparse.ArgumentParser) -> None:

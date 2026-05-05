@@ -15,8 +15,10 @@ from typing import TYPE_CHECKING, Any
 import chess
 import chess.engine
 import pytest
+import torch
 
 import scripts.eval as eval_cli
+from halluci_mate.chess_tokenizer import ChessTokenizer
 from halluci_mate.eval.records import Evaluator, TopKEntry
 from halluci_mate.eval.runs import (
     CONFIG_FILENAME,
@@ -34,12 +36,31 @@ if TYPE_CHECKING:
     from halluci_mate.game import Game
 
 
+class _UniformModel:
+    """Returns log-uniform logits at every position; used for perplexity scoring."""
+
+    def __init__(self, vocab_size: int) -> None:
+        self.vocab_size = vocab_size
+
+    def __call__(self, *, input_ids: torch.Tensor) -> Any:
+        batch, seq_len = input_ids.shape
+        return type("ModelOutput", (), {"logits": torch.zeros((batch, seq_len, self.vocab_size))})()
+
+
 class _StubEngine:
-    """Stand-in for ``ChessInferenceEngine``. Plays the first legal move."""
+    """Stand-in for ``ChessInferenceEngine``. Plays the first legal move.
+
+    Carries ``model`` / ``tokenizer`` / ``device`` attributes so the
+    ``perplexity`` evaluator's ``PerplexityScorer`` Protocol is satisfied
+    by the same stub used for ``vs-stockfish`` and ``legal-rate``.
+    """
 
     def __init__(self, *, temperature: float = 0.0, top_k: int = 0) -> None:
         self.temperature = temperature
         self.top_k = top_k
+        self.tokenizer = ChessTokenizer()
+        self.device = torch.device("cpu")
+        self.model = _UniformModel(vocab_size=self.tokenizer.vocab_size)
 
     def predict_with_metadata(
         self,
@@ -48,15 +69,17 @@ class _StubEngine:
         constrained: bool | None = None,
         record_top_k: int = 5,
     ) -> MovePrediction:
-        del constrained, record_top_k
+        del record_top_k
         played = next(iter(game.board.legal_moves))
+        # ``legal-rate`` flips this off explicitly; all other paths leave it None.
+        raw_legal = True
         return MovePrediction(
-            played_move=played,
+            played_move=played if constrained is not False else None,
             model_move_uci=played.uci(),
             raw_sample_move_uci=played.uci(),
-            raw_sample_legal=True,
+            raw_sample_legal=raw_legal,
             model_top_k=[TopKEntry(move=played.uci(), logprob=-0.1)],
-            mask_used=True,
+            mask_used=constrained is not False,
         )
 
 
@@ -157,6 +180,169 @@ def test_report_recomputes_metrics_without_touching_records(tmp_path: Path) -> N
 def test_report_missing_run_dir_raises(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match="run directory not found"):
         eval_cli.main(["report", "does-not-exist", "--evals-dir", str(tmp_path)])
+
+
+_TWO_GAME_PGN = """[Event "g1"]
+[Result "1-0"]
+
+1. e4 e5 2. Nf3 Nc6 1-0
+
+[Event "g2"]
+[Result "0-1"]
+
+1. d4 d5 2. c4 e6 0-1
+"""
+
+
+def _patch_engine_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(eval_cli.ChessInferenceEngine, "from_checkpoint", classmethod(lambda cls, *a, **kw: _StubEngine()))
+
+
+def test_legal_rate_smoke_with_positions_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`legal-rate --positions` produces a valid run dir + metrics.json."""
+    _patch_engine_only(monkeypatch)
+    fen_file = tmp_path / "positions.fen"
+    fen_file.write_text(
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1\nrnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq e6 0 2\n",
+        encoding="utf-8",
+    )
+    evals_dir = tmp_path / "evals"
+
+    eval_cli.main(
+        [
+            "legal-rate",
+            "--checkpoint",
+            "stub-ckpt",
+            "--positions",
+            str(fen_file),
+            "--evals-dir",
+            str(evals_dir),
+        ]
+    )
+
+    run_dirs = [p for p in evals_dir.iterdir() if p.is_dir()]
+    assert len(run_dirs) == 1
+    run_dir = run_dirs[0]
+    for filename in (CONFIG_FILENAME, RECORDS_FILENAME, METRICS_FILENAME):
+        assert (run_dir / filename).exists(), f"missing {filename} after legal-rate run"
+
+    metrics = json.loads((run_dir / METRICS_FILENAME).read_text(encoding="utf-8"))
+    assert metrics["evaluator"] == Evaluator.LEGAL_RATE.value
+    # _StubEngine returns played as the legal raw sample → all 2 positions legal.
+    assert metrics["legal_rate"]["n"] == 2
+    assert metrics["legal_rate"]["legal"] == 2
+
+
+def test_legal_rate_smoke_with_pgn_sampling(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`legal-rate --sample-from-games` reads a PGN and produces a run dir."""
+    _patch_engine_only(monkeypatch)
+    pgn_file = tmp_path / "games.pgn"
+    pgn_file.write_text(_TWO_GAME_PGN, encoding="utf-8")
+    evals_dir = tmp_path / "evals"
+
+    eval_cli.main(
+        [
+            "legal-rate",
+            "--checkpoint",
+            "stub-ckpt",
+            "--sample-from-games",
+            str(pgn_file),
+            "--n",
+            "3",
+            "--seed",
+            "1",
+            "--evals-dir",
+            str(evals_dir),
+        ]
+    )
+
+    run_dirs = [p for p in evals_dir.iterdir() if p.is_dir()]
+    assert len(run_dirs) == 1
+    run_dir = run_dirs[0]
+    metrics = json.loads((run_dir / METRICS_FILENAME).read_text(encoding="utf-8"))
+    assert metrics["evaluator"] == Evaluator.LEGAL_RATE.value
+    assert metrics["legal_rate"]["n"] == 3
+
+
+def test_legal_rate_requires_a_position_source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """argparse mutually exclusive group rejects missing source."""
+    _patch_engine_only(monkeypatch)
+    with pytest.raises(SystemExit):
+        eval_cli.main(
+            [
+                "legal-rate",
+                "--checkpoint",
+                "stub-ckpt",
+                "--evals-dir",
+                str(tmp_path / "evals"),
+            ]
+        )
+
+
+def test_perplexity_smoke_writes_metrics_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`perplexity --data` produces a valid run dir + metrics.json with NLL/bits."""
+    _patch_engine_only(monkeypatch)
+    data = tmp_path / "sequences.jsonl"
+    data.write_text(
+        json.dumps({"id": "g1", "perspective": "white", "moves": ["e2e4", "e7e5"]}) + "\n" + json.dumps({"id": "g2", "perspective": "black", "moves": ["d2d4", "d7d5"]}) + "\n",
+        encoding="utf-8",
+    )
+    evals_dir = tmp_path / "evals"
+
+    eval_cli.main(
+        [
+            "perplexity",
+            "--checkpoint",
+            "stub-ckpt",
+            "--data",
+            str(data),
+            "--evals-dir",
+            str(evals_dir),
+        ]
+    )
+
+    run_dirs = [p for p in evals_dir.iterdir() if p.is_dir()]
+    assert len(run_dirs) == 1
+    run_dir = run_dirs[0]
+    for filename in (CONFIG_FILENAME, RECORDS_FILENAME, METRICS_FILENAME):
+        assert (run_dir / filename).exists(), f"missing {filename} after perplexity run"
+
+    metrics = json.loads((run_dir / METRICS_FILENAME).read_text(encoding="utf-8"))
+    assert metrics["evaluator"] == Evaluator.PERPLEXITY.value
+    assert metrics["num_sequences"] == 2
+    # 2 sequences * 2 logprobs each (3 tokens → 2 targets).
+    assert metrics["num_tokens"] == 4
+    assert metrics["mean_nll"] > 0.0
+    assert metrics["bits_per_token"] > 0.0
+    assert metrics["perplexity"] > 1.0
+
+
+def test_perplexity_max_sequences_is_respected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_engine_only(monkeypatch)
+    data = tmp_path / "sequences.jsonl"
+    data.write_text(
+        "".join(json.dumps({"id": f"g{i}", "perspective": "white", "moves": ["e2e4", "e7e5"]}) + "\n" for i in range(5)),
+        encoding="utf-8",
+    )
+    evals_dir = tmp_path / "evals"
+
+    eval_cli.main(
+        [
+            "perplexity",
+            "--checkpoint",
+            "stub-ckpt",
+            "--data",
+            str(data),
+            "--max-sequences",
+            "2",
+            "--evals-dir",
+            str(evals_dir),
+        ]
+    )
+
+    run_dir = next(p for p in evals_dir.iterdir() if p.is_dir())
+    metrics = json.loads((run_dir / METRICS_FILENAME).read_text(encoding="utf-8"))
+    assert metrics["num_sequences"] == 2
 
 
 def test_report_recovers_from_corrupt_metrics(tmp_path: Path) -> None:

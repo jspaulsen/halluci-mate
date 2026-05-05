@@ -14,13 +14,16 @@ are pinned to the enums declared in `records.py` so the on-disk
 
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any
 
 from halluci_mate.eval.records import (
     Evaluator,
     PerGameRecord,
+    PerLegalRateRecord,
     PerMoveRecord,
+    PerPerplexityRecord,
     Phase,
     Side,
 )
@@ -91,15 +94,26 @@ def compute_win_rate(records: Iterable[Record]) -> WinRateStats:
 
 
 def compute_legal_rate(records: Iterable[Record]) -> float:
-    """Fraction of per-move records whose unconstrained top-1 sample was legal.
+    """Fraction of records whose unconstrained top-1 sample was legal.
 
-    Source field is `raw_sample_legal` — when `mask_used` is false the raw
-    sample equals the played move and the bit is trivially true; the
-    metric only carries signal when `mask_used` is true (i.e. constrained
-    decoding). Returns 0.0 if there are no per-move records.
+    Accepts both per-move records (`PerMoveRecord.raw_sample_legal`) and
+    per-legal-rate records (`PerLegalRateRecord.legal`) so the same metric
+    works across `vs_stockfish` and `legal_rate` runs. Other record types
+    are ignored, so callers can pass an unfiltered records stream. For
+    `PerMoveRecord`s, the source bit only carries signal when `mask_used`
+    is true (otherwise raw == played and the bit is trivially true).
+    Returns 0.0 if there are no relevant records.
     """
-    moves = [r for r in records if isinstance(r, PerMoveRecord)]
-    return _legal_rate_bucket(moves).rate
+    legal = 0
+    n = 0
+    for r in records:
+        if isinstance(r, PerMoveRecord):
+            n += 1
+            legal += int(r.raw_sample_legal)
+        elif isinstance(r, PerLegalRateRecord):
+            n += 1
+            legal += int(r.legal)
+    return legal / n if n else 0.0
 
 
 def compute_all(records: Iterable[Record], config: dict[str, Any]) -> dict[str, Any]:
@@ -113,7 +127,45 @@ def compute_all(records: Iterable[Record], config: dict[str, Any]) -> dict[str, 
     evaluator = config.get(_CONFIG_EVALUATOR_KEY)
     if evaluator == Evaluator.VS_STOCKFISH.value:
         return _compute_vs_stockfish(records_list, config)
+    if evaluator == Evaluator.LEGAL_RATE.value:
+        return _compute_legal_rate_aggregate(records_list)
+    if evaluator == Evaluator.PERPLEXITY.value:
+        return _compute_perplexity(records_list)
     raise ValueError(f"compute_all: unsupported evaluator {evaluator!r}")
+
+
+def _compute_legal_rate_aggregate(records: list[Record]) -> dict[str, Any]:
+    legal_rate_records = [r for r in records if isinstance(r, PerLegalRateRecord)]
+    n = len(legal_rate_records)
+    legal = sum(1 for r in legal_rate_records if r.legal)
+    return {
+        "evaluator": Evaluator.LEGAL_RATE.value,
+        "legal_rate": asdict(LegalRateBucket(n=n, legal=legal, rate=legal / n if n else 0.0)),
+    }
+
+
+def _compute_perplexity(records: list[Record]) -> dict[str, Any]:
+    perp_records = [r for r in records if isinstance(r, PerPerplexityRecord)]
+    all_logprobs: list[float] = [lp for r in perp_records for lp in r.token_logprobs]
+    num_tokens = len(all_logprobs)
+    if num_tokens == 0:
+        return {
+            "evaluator": Evaluator.PERPLEXITY.value,
+            "num_sequences": len(perp_records),
+            "num_tokens": 0,
+            "mean_nll": 0.0,
+            "bits_per_token": 0.0,
+            "perplexity": 0.0,
+        }
+    mean_nll = -sum(all_logprobs) / num_tokens
+    return {
+        "evaluator": Evaluator.PERPLEXITY.value,
+        "num_sequences": len(perp_records),
+        "num_tokens": num_tokens,
+        "mean_nll": mean_nll,
+        "bits_per_token": mean_nll / math.log(2),
+        "perplexity": math.exp(mean_nll),
+    }
 
 
 def _compute_vs_stockfish(records: list[Record], config: dict[str, Any]) -> dict[str, Any]:

@@ -7,6 +7,7 @@ acceptance criteria.
 from __future__ import annotations
 
 import json
+import math
 
 import pytest
 
@@ -19,7 +20,12 @@ from halluci_mate.eval.metrics import (
     compute_win_rate,
 )
 from halluci_mate.eval.records import Evaluator, Phase, Record, Side
-from tests.eval.conftest import make_per_game_record, make_per_move_record
+from tests.eval.conftest import (
+    make_per_game_record,
+    make_per_legal_rate_record,
+    make_per_move_record,
+    make_per_perplexity_record,
+)
 
 DEFAULT_CONFIG: dict[str, object] = {
     "evaluator": Evaluator.VS_STOCKFISH.value,
@@ -165,6 +171,83 @@ def test_compute_all_schema_is_stable_for_diffing() -> None:
 def test_compute_all_rejects_unknown_evaluator() -> None:
     with pytest.raises(ValueError, match="unsupported evaluator"):
         compute_all([], {"evaluator": "puzzles"})
+
+
+def test_compute_legal_rate_counts_per_legal_rate_records() -> None:
+    """The same metric works over `PerLegalRateRecord.legal` for `legal_rate` runs."""
+    records: list[Record] = [
+        make_per_legal_rate_record(0, legal=True),
+        make_per_legal_rate_record(1, legal=False),
+        make_per_legal_rate_record(2, legal=True),
+        make_per_legal_rate_record(3, legal=True),
+    ]
+    assert compute_legal_rate(records) == pytest.approx(0.75)
+
+
+def test_compute_legal_rate_combines_record_shapes() -> None:
+    """Mixed records: per-move + per-legal-rate share the same denominator."""
+    records: list[Record] = [
+        make_per_move_record(0, raw_sample_legal=True),
+        make_per_move_record(1, raw_sample_legal=False),
+        make_per_legal_rate_record(2, legal=True),
+        make_per_legal_rate_record(3, legal=False),
+    ]
+    assert compute_legal_rate(records) == pytest.approx(0.5)
+
+
+def test_compute_all_legal_rate_evaluator() -> None:
+    records: list[Record] = [
+        make_per_legal_rate_record(0, legal=True),
+        make_per_legal_rate_record(1, legal=False),
+        make_per_legal_rate_record(2, legal=True),
+    ]
+    config = {"evaluator": Evaluator.LEGAL_RATE.value}
+    metrics = compute_all(records, config)
+
+    assert metrics["evaluator"] == Evaluator.LEGAL_RATE.value
+    assert metrics["legal_rate"] == {"n": 3, "legal": 2, "rate": pytest.approx(2 / 3)}
+
+
+def test_compute_all_legal_rate_handles_empty_records() -> None:
+    metrics = compute_all([], {"evaluator": Evaluator.LEGAL_RATE.value})
+    assert metrics["legal_rate"] == {"n": 0, "legal": 0, "rate": 0.0}
+
+
+def test_compute_all_perplexity_aggregates_token_logprobs() -> None:
+    """Mean NLL is `-mean(logprobs)`; bits/token is NLL / ln 2."""
+    records: list[Record] = [
+        make_per_perplexity_record(0, token_logprobs=[-1.0, -2.0]),
+        make_per_perplexity_record(1, token_logprobs=[-3.0, -4.0]),
+    ]
+    config = {"evaluator": Evaluator.PERPLEXITY.value}
+    metrics = compute_all(records, config)
+
+    expected_mean_nll = (1.0 + 2.0 + 3.0 + 4.0) / 4
+    assert metrics["evaluator"] == Evaluator.PERPLEXITY.value
+    assert metrics["num_sequences"] == 2
+    assert metrics["num_tokens"] == 4
+    assert metrics["mean_nll"] == pytest.approx(expected_mean_nll)
+    assert metrics["bits_per_token"] == pytest.approx(expected_mean_nll / math.log(2))
+    assert metrics["perplexity"] == pytest.approx(math.exp(expected_mean_nll))
+
+
+def test_compute_all_perplexity_handles_empty_records() -> None:
+    metrics = compute_all([], {"evaluator": Evaluator.PERPLEXITY.value})
+    assert metrics["num_sequences"] == 0
+    assert metrics["num_tokens"] == 0
+    assert metrics["mean_nll"] == 0.0
+    assert metrics["bits_per_token"] == 0.0
+    assert metrics["perplexity"] == 0.0
+
+
+def test_compute_all_legal_rate_output_json_serializable() -> None:
+    metrics = compute_all([make_per_legal_rate_record(0)], {"evaluator": Evaluator.LEGAL_RATE.value})
+    json.loads(json.dumps(metrics))
+
+
+def test_compute_all_perplexity_output_json_serializable() -> None:
+    metrics = compute_all([make_per_perplexity_record(0)], {"evaluator": Evaluator.PERPLEXITY.value})
+    json.loads(json.dumps(metrics))
 
 
 def test_legal_rate_bucket_rate_is_zero_when_empty() -> None:
