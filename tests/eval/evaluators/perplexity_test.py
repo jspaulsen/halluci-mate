@@ -253,3 +253,41 @@ def test_rejects_move_not_in_vocab(tmp_path: Path) -> None:
             run_id=DEFAULT_RUN_ID,
             checkpoint=DEFAULT_CHECKPOINT,
         )
+
+
+def test_jsonl_decode_error_includes_path_and_lineno(tmp_path: Path) -> None:
+    """A malformed JSON line must surface the file path and line number, not python's bare JSONDecodeError."""
+    data = tmp_path / "sequences.jsonl"
+    data.write_text(
+        json.dumps({"id": "g1", "perspective": "white", "moves": ["e2e4"]}) + "\n{not json}\n",
+        encoding="utf-8",
+    )
+    tokenizer = ChessTokenizer()
+
+    with pytest.raises(ValueError, match=r"sequences\.jsonl:2: invalid JSON"):
+        run_perplexity(
+            engine=_StubScorer(_UniformModel(vocab_size=tokenizer.vocab_size), tokenizer),
+            config=PerplexityConfig(data_path=data),
+            run_dir=tmp_path / "run",
+            run_id=DEFAULT_RUN_ID,
+            checkpoint=DEFAULT_CHECKPOINT,
+        )
+
+
+def test_validation_error_includes_path_and_lineno(tmp_path: Path) -> None:
+    """A schema-violating row must surface ``path:lineno`` so the offending row is locatable."""
+    data = tmp_path / "sequences.jsonl"
+    data.write_text(
+        json.dumps({"id": "g1", "perspective": "white", "moves": ["e2e4"]}) + "\n" + json.dumps({"id": "g2", "moves": ["d2d4"]}) + "\n",
+        encoding="utf-8",
+    )
+    tokenizer = ChessTokenizer()
+
+    with pytest.raises(ValueError, match=r"sequences\.jsonl:2: .*perspective"):
+        run_perplexity(
+            engine=_StubScorer(_UniformModel(vocab_size=tokenizer.vocab_size), tokenizer),
+            config=PerplexityConfig(data_path=data),
+            run_dir=tmp_path / "run",
+            run_id=DEFAULT_RUN_ID,
+            checkpoint=DEFAULT_CHECKPOINT,
+        )
