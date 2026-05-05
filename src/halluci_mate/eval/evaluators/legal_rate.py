@@ -50,9 +50,7 @@ class LegalRateConfig:
     seed: int = 0
 
     def __post_init__(self) -> None:
-        sources = [self.positions_path, self.sample_from_games_path]
-        set_count = sum(s is not None for s in sources)
-        if set_count != 1:
+        if (self.positions_path is None) == (self.sample_from_games_path is None):
             raise ValueError("exactly one of positions_path / sample_from_games_path must be set")
         if self.sample_from_games_path is not None and self.sample_n < 1:
             raise ValueError(f"sample_n must be >= 1; got {self.sample_n}")
