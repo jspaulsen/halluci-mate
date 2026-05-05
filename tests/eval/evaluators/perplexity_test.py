@@ -196,6 +196,34 @@ def test_rejects_missing_required_fields(tmp_path: Path) -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "moves",
+    [
+        pytest.param([], id="empty-list"),
+        pytest.param("e2e4", id="string-not-list"),
+    ],
+)
+def test_rejects_non_list_or_empty_moves(tmp_path: Path, moves: object) -> None:
+    """`moves` must be a non-empty list; a string or empty list must fail with a clear message.
+
+    Pins the `_validate_row` branch that rejects malformed `moves` shapes so a
+    future refactor can't silently let a string slip through into
+    `_tokenize_sequence` (which would iterate per-character).
+    """
+    data = tmp_path / "sequences.jsonl"
+    _write_jsonl(data, [{"id": "g1", "perspective": "white", "moves": moves}])
+    tokenizer = ChessTokenizer()
+
+    with pytest.raises(ValueError, match="non-empty 'moves' list"):
+        run_perplexity(
+            engine=_StubScorer(_UniformModel(vocab_size=tokenizer.vocab_size), tokenizer),
+            config=PerplexityConfig(data_path=data),
+            run_dir=tmp_path / "run",
+            run_id=DEFAULT_RUN_ID,
+            checkpoint=DEFAULT_CHECKPOINT,
+        )
+
+
 def test_config_payload_round_trips_data_path(tmp_path: Path) -> None:
     data = tmp_path / "sequences.jsonl"
     _write_jsonl(data, [{"id": "g1", "perspective": "white", "moves": ["e2e4"]}])
