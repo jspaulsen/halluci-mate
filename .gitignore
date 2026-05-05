@@ -227,6 +227,8 @@ data/
 # Claude Code
 .claude/skill-logs/
 .claude/plans/
+.claude/worktrees/
+.claude-review/
 
 # Editors/tools
 .obsidian/
