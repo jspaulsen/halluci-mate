@@ -151,6 +151,12 @@ def _iter_pgn_samples(path: Path, *, n: int, seed: int) -> Iterator[_Position]:
     asked to predict the move at that ply). The sample is materialized by
     replaying moves onto a fresh ``chess.Board`` so ``Game.move_stack`` carries
     the real prefix into ``predict_with_metadata``.
+
+    The reservoir is built eagerly: the entire PGN is read before the first
+    record is emitted, so a multi-GB Lichess corpus produces a long opening
+    silence followed by a fast scoring phase. Acceptable at v1's documented
+    10k-position scale; future work to stream + cap memory if the source
+    PGN grows past tens of thousands of games.
     """
     rng = random.Random(seed)
     entries = _reservoir_sample_pgn(path, n=n, rng=rng)
@@ -170,15 +176,19 @@ class _ReservoirEntry:
 
 
 def _reservoir_sample_pgn(path: Path, *, n: int, rng: random.Random) -> list[_ReservoirEntry]:
-    """One-pass reservoir sample of (game, ply) positions across all PGN games."""
+    """One-pass reservoir sample of (game, ply) positions across all PGN games.
+
+    Memory cost is proportional to ``n * mean_ply``: each entry snapshots the
+    move list up to its ply (so the entry can replay the position on demand).
+    At ``n=10_000`` and mean ply ~80 that's ~800k ``chess.Move`` references,
+    in the tens-of-MB range. A leaner shape would store ``(game_index, ply)``
+    indices and reread the PGN to materialize the prefix; revisit if memory
+    becomes a real problem at scale.
+    """
     reservoir: list[_ReservoirEntry] = []
     seen = 0
     with path.open(encoding="utf-8") as pgn_fp:
-        game_index = 0
-        while True:
-            game = chess.pgn.read_game(pgn_fp)
-            if game is None:
-                break
+        for game_index, game in enumerate(iter(lambda: chess.pgn.read_game(pgn_fp), None)):
             game_id = f"game-{game_index:04d}"
             moves: list[chess.Move] = []
             for node in game.mainline():
@@ -191,7 +201,6 @@ def _reservoir_sample_pgn(path: Path, *, n: int, rng: random.Random) -> list[_Re
                     if j < n:
                         reservoir[j] = entry
                 moves.append(node.move)
-            game_index += 1
     return reservoir
 
 

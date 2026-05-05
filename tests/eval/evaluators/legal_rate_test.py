@@ -211,6 +211,26 @@ def test_sample_from_games_is_seeded(tmp_path: Path) -> None:
     assert a == b
 
 
+def test_sample_from_games_handles_empty_pgn(tmp_path: Path) -> None:
+    """An empty PGN file emits zero records without raising."""
+    pgn_file = tmp_path / "empty.pgn"
+    pgn_file.write_text("", encoding="utf-8")
+    run_dir = tmp_path / "run"
+
+    n = run_legal_rate(
+        engine=_ConstantEngine(),
+        config=LegalRateConfig(sample_from_games_path=pgn_file, sample_n=10, seed=0),
+        run_dir=run_dir,
+        run_id=DEFAULT_RUN_ID,
+        checkpoint=DEFAULT_CHECKPOINT,
+    )
+
+    assert n == 0
+    assert _read_legal_records(run_dir) == []
+    # Run dir still has a valid config.json (we wrote it before scoring).
+    assert (run_dir / CONFIG_FILENAME).exists()
+
+
 def test_config_rejects_no_source() -> None:
     with pytest.raises(ValueError, match="exactly one of"):
         LegalRateConfig()

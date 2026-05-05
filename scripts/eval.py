@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 import chess
 import chess.engine
@@ -129,11 +129,7 @@ def _run_vs_stockfish_cmd(args: argparse.Namespace) -> None:
         blunder_threshold_cp=args.blunder_threshold_cp,
     )
 
-    tag = resolve_checkpoint_tag(args.checkpoint, args.checkpoint_tag)
-    run_id = make_run_id(tag, Evaluator.VS_STOCKFISH)
-    run_dir = args.evals_dir / run_id
-    print(f"Run id: {run_id}")
-    print(f"Run dir: {run_dir}")
+    run_id, run_dir = _resolve_run_dir(args, Evaluator.VS_STOCKFISH)
 
     engine = ChessInferenceEngine.from_checkpoint(
         args.checkpoint,
@@ -200,11 +196,7 @@ def _run_legal_rate_cmd(args: argparse.Namespace) -> None:
         seed=args.seed,
     )
 
-    tag = resolve_checkpoint_tag(args.checkpoint, args.checkpoint_tag)
-    run_id = make_run_id(tag, Evaluator.LEGAL_RATE)
-    run_dir = args.evals_dir / run_id
-    print(f"Run id: {run_id}")
-    print(f"Run dir: {run_dir}")
+    run_id, run_dir = _resolve_run_dir(args, Evaluator.LEGAL_RATE)
 
     engine = ChessInferenceEngine.from_checkpoint(args.checkpoint, constrained=False, device=args.device)
 
@@ -229,7 +221,7 @@ def _legal_rate_from_metrics(metrics: dict[str, object]) -> float:
     block = metrics.get("legal_rate")
     if not isinstance(block, dict):
         return 0.0
-    rate = cast(dict[str, Any], block).get("rate")
+    rate = cast("dict[str, object]", block).get("rate")
     return float(rate) if isinstance(rate, (int, float)) else 0.0
 
 
@@ -249,11 +241,7 @@ def _add_perplexity_args(parser: argparse.ArgumentParser) -> None:
 def _run_perplexity_cmd(args: argparse.Namespace) -> None:
     config = PerplexityConfig(data_path=args.data, max_sequences=args.max_sequences)
 
-    tag = resolve_checkpoint_tag(args.checkpoint, args.checkpoint_tag)
-    run_id = make_run_id(tag, Evaluator.PERPLEXITY)
-    run_dir = args.evals_dir / run_id
-    print(f"Run id: {run_id}")
-    print(f"Run dir: {run_dir}")
+    run_id, run_dir = _resolve_run_dir(args, Evaluator.PERPLEXITY)
 
     engine = ChessInferenceEngine.from_checkpoint(args.checkpoint, constrained=False, device=args.device)
 
@@ -286,6 +274,16 @@ def _run_report_cmd(args: argparse.Namespace) -> None:
     metrics = _aggregate_metrics(run_dir)
     print(f"Wrote metrics.json for {args.run_id}")
     print(f"  evaluator: {metrics.get('evaluator')}")
+
+
+def _resolve_run_dir(args: argparse.Namespace, evaluator: Evaluator) -> tuple[str, Path]:
+    """Build the ``(run_id, run_dir)`` pair shared by every fresh-run subcommand and announce it."""
+    tag = resolve_checkpoint_tag(args.checkpoint, args.checkpoint_tag)
+    run_id = make_run_id(tag, evaluator)
+    run_dir = args.evals_dir / run_id
+    print(f"Run id: {run_id}")
+    print(f"Run dir: {run_dir}")
+    return run_id, run_dir
 
 
 def _aggregate_metrics(run_dir: Path) -> dict[str, object]:

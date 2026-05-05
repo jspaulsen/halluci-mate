@@ -21,13 +21,18 @@ Input format (jsonl, one row per sequence):
 We score the move tokens (and the optional ``<DRAW>``) but not a trailing
 ``<EOS>``: ``<EOS>`` is near-deterministic given the rest of the sequence and
 folding it in would deflate the NLL.
+
+Every record's ``fen`` is the standard starting position because the v1 input
+schema only carries full games (the move list always starts from move 0). The
+schema column exists because future variants may score continuations from
+non-start prefixes; until then the value is constant on every record.
 """
 
 from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Protocol
 
 import chess
 import torch
@@ -44,12 +49,36 @@ from halluci_mate.eval.runs import RunWriter
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
+    from typing import Any
 
 
 _PERSPECTIVE_TOKEN_IDS: dict[str, int] = {
     "white": WHITE_TOKEN_ID,
     "black": BLACK_TOKEN_ID,
 }
+
+
+class _ModelOutput(Protocol):
+    """Minimum surface of a HuggingFace model output we read.
+
+    The full ``CausalLMOutputWithPast`` shape is irrelevant — we only need
+    ``logits`` for scoring, so the protocol pins exactly that and lets test
+    stubs return a duck-typed object.
+    """
+
+    @property
+    def logits(self) -> torch.Tensor: ...
+
+
+class _ModelCallable(Protocol):
+    """Callable that runs a forward pass over a batch of input ids.
+
+    Real implementation: a HuggingFace ``PreTrainedModel`` invoked as
+    ``model(input_ids=...)``. Stubbed in tests with a ``__call__`` that
+    returns a duck-typed ``_ModelOutput``.
+    """
+
+    def __call__(self, *, input_ids: torch.Tensor) -> _ModelOutput: ...
 
 
 class PerplexityScorer(Protocol):
@@ -63,7 +92,7 @@ class PerplexityScorer(Protocol):
     """
 
     @property
-    def model(self) -> Any: ...
+    def model(self) -> _ModelCallable: ...
     @property
     def tokenizer(self) -> ChessTokenizer: ...
     @property
@@ -173,7 +202,7 @@ def _tokenize_sequence(row: dict[str, Any], *, tokenizer: ChessTokenizer) -> lis
     return token_ids
 
 
-def _score_sequence(token_ids: list[int], *, model: Any, device: torch.device) -> list[float]:
+def _score_sequence(token_ids: list[int], *, model: _ModelCallable, device: torch.device) -> list[float]:
     """Run a single forward pass on ``token_ids`` and return per-target logprobs.
 
     Targets are positions ``1..len(token_ids)-1`` of the input — the
@@ -189,4 +218,4 @@ def _score_sequence(token_ids: list[int], *, model: Any, device: torch.device) -
     log_probs = torch.log_softmax(logits[:-1], dim=-1)
     targets = input_ids[0, 1:].unsqueeze(-1)
     gathered = log_probs.gather(-1, targets).squeeze(-1)
-    return [float(x) for x in gathered.tolist()]
+    return gathered.tolist()
