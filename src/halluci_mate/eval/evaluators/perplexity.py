@@ -176,6 +176,8 @@ def _iter_sequences(path: Path, *, max_sequences: int | None) -> Iterator[dict[s
             if not line:
                 continue
             row = json.loads(line)
+            if not isinstance(row, dict):
+                raise ValueError(f"perplexity input row must be a JSON object; got {type(row).__name__}: {row!r}")
             _validate_row(row)
             yield row
             yielded += 1

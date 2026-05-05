@@ -244,3 +244,21 @@ def test_config_rejects_both_sources(tmp_path: Path) -> None:
 def test_config_rejects_zero_sample_n(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="sample_n"):
         LegalRateConfig(sample_from_games_path=tmp_path / "g.pgn", sample_n=0)
+
+
+def test_positions_file_malformed_fen_raises_with_lineno(tmp_path: Path) -> None:
+    """A malformed FEN line must surface the file path and line number, not just python-chess's bare error."""
+    fen_file = tmp_path / "positions.fen"
+    fen_file.write_text(
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1\nnot-a-fen\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=r"positions\.fen:2: invalid FEN"):
+        run_legal_rate(
+            engine=_ConstantEngine(),
+            config=LegalRateConfig(positions_path=fen_file),
+            run_dir=tmp_path / "run",
+            run_id=DEFAULT_RUN_ID,
+            checkpoint=DEFAULT_CHECKPOINT,
+        )

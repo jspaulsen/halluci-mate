@@ -139,7 +139,10 @@ def _iter_fen_file(path: Path) -> Iterator[_Position]:
             fen = raw.strip()
             if not fen:
                 continue
-            board = chess.Board(fen)
+            try:
+                board = chess.Board(fen)
+            except ValueError as exc:
+                raise ValueError(f"{path}:{lineno}: invalid FEN {fen!r}: {exc}") from exc
             game = Game(board=board, perspective=_perspective_for_turn(board.turn))
             yield _Position(position_id=f"{path.name}:{lineno}", game=game)
 

@@ -205,12 +205,12 @@ def test_compute_all_legal_rate_evaluator() -> None:
     metrics = compute_all(records, config)
 
     assert metrics["evaluator"] == Evaluator.LEGAL_RATE.value
-    assert metrics["legal_rate"] == {"n": 3, "legal": 2, "rate": pytest.approx(2 / 3)}
+    assert metrics["legal_rate"] == {"overall": {"n": 3, "legal": 2, "rate": pytest.approx(2 / 3)}}
 
 
 def test_compute_all_legal_rate_handles_empty_records() -> None:
     metrics = compute_all([], {"evaluator": Evaluator.LEGAL_RATE.value})
-    assert metrics["legal_rate"] == {"n": 0, "legal": 0, "rate": 0.0}
+    assert metrics["legal_rate"] == {"overall": {"n": 0, "legal": 0, "rate": 0.0}}
 
 
 def test_compute_all_perplexity_aggregates_token_logprobs() -> None:

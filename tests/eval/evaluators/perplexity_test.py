@@ -221,3 +221,19 @@ def test_config_payload_round_trips_data_path(tmp_path: Path) -> None:
 def test_config_rejects_zero_max_sequences(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="max_sequences"):
         PerplexityConfig(data_path=tmp_path / "x.jsonl", max_sequences=0)
+
+
+def test_rejects_non_dict_jsonl_row(tmp_path: Path) -> None:
+    """A jsonl line that decodes to a non-object (list/scalar) must fail with a clear message."""
+    data = tmp_path / "sequences.jsonl"
+    data.write_text("[1, 2, 3]\n", encoding="utf-8")
+    tokenizer = ChessTokenizer()
+
+    with pytest.raises(ValueError, match="must be a JSON object"):
+        run_perplexity(
+            engine=_StubScorer(_UniformModel(vocab_size=tokenizer.vocab_size), tokenizer),
+            config=PerplexityConfig(data_path=data),
+            run_dir=tmp_path / "run",
+            run_id=DEFAULT_RUN_ID,
+            checkpoint=DEFAULT_CHECKPOINT,
+        )

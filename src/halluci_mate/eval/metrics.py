@@ -137,10 +137,14 @@ def compute_all(records: Iterable[Record], config: dict[str, Any]) -> dict[str, 
 def _compute_legal_rate_aggregate(records: list[Record]) -> dict[str, Any]:
     legal_rate_records = [r for r in records if isinstance(r, PerLegalRateRecord)]
     n = len(legal_rate_records)
-    legal = sum(1 for r in legal_rate_records if r.legal)
+    legal = sum(r.legal for r in legal_rate_records)
+    # Match the `vs_stockfish` payload shape: nest under `overall` so the on-disk
+    # path is always `legal_rate.overall.{n,legal,rate}`, regardless of evaluator.
     return {
         "evaluator": Evaluator.LEGAL_RATE.value,
-        "legal_rate": asdict(LegalRateBucket(n=n, legal=legal, rate=legal / n if n else 0.0)),
+        "legal_rate": {
+            "overall": asdict(LegalRateBucket(n=n, legal=legal, rate=legal / n if n else 0.0)),
+        },
     }
 
 
@@ -219,6 +223,6 @@ def _classify_game(game: PerGameRecord) -> str:
 
 
 def _legal_rate_bucket(moves: list[PerMoveRecord]) -> LegalRateBucket:
-    legal = sum(1 for m in moves if m.raw_sample_legal)
+    legal = sum(m.raw_sample_legal for m in moves)
     rate = legal / len(moves) if moves else 0.0
     return LegalRateBucket(n=len(moves), legal=legal, rate=rate)

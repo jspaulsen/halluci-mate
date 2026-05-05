@@ -221,7 +221,13 @@ def _legal_rate_from_metrics(metrics: dict[str, object]) -> float:
     block = metrics.get("legal_rate")
     if not isinstance(block, dict):
         return 0.0
-    rate = cast("dict[str, object]", block).get("rate")
+    # `metrics` is `dict[str, object]`; `isinstance(block, dict)` narrows to
+    # `dict[Never, Never]` under the project's type checker, so re-cast to a
+    # generic str-keyed payload before walking nested keys.
+    overall = cast("dict[str, object]", block).get("overall")
+    if not isinstance(overall, dict):
+        return 0.0
+    rate = cast("dict[str, object]", overall).get("rate")
     return float(rate) if isinstance(rate, (int, float)) else 0.0
 
 

@@ -10,6 +10,7 @@ the run-directory contract together correctly.
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import chess
@@ -44,7 +45,7 @@ class _UniformModel:
 
     def __call__(self, *, input_ids: torch.Tensor) -> Any:
         batch, seq_len = input_ids.shape
-        return type("ModelOutput", (), {"logits": torch.zeros((batch, seq_len, self.vocab_size))})()
+        return SimpleNamespace(logits=torch.zeros((batch, seq_len, self.vocab_size)))
 
 
 class _StubEngine:
@@ -229,8 +230,8 @@ def test_legal_rate_smoke_with_positions_file(tmp_path: Path, monkeypatch: pytes
     metrics = json.loads((run_dir / METRICS_FILENAME).read_text(encoding="utf-8"))
     assert metrics["evaluator"] == Evaluator.LEGAL_RATE.value
     # _StubEngine returns played as the legal raw sample → all 2 positions legal.
-    assert metrics["legal_rate"]["n"] == 2
-    assert metrics["legal_rate"]["legal"] == 2
+    assert metrics["legal_rate"]["overall"]["n"] == 2
+    assert metrics["legal_rate"]["overall"]["legal"] == 2
 
 
 def test_legal_rate_smoke_with_pgn_sampling(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -261,7 +262,7 @@ def test_legal_rate_smoke_with_pgn_sampling(tmp_path: Path, monkeypatch: pytest.
     run_dir = run_dirs[0]
     metrics = json.loads((run_dir / METRICS_FILENAME).read_text(encoding="utf-8"))
     assert metrics["evaluator"] == Evaluator.LEGAL_RATE.value
-    assert metrics["legal_rate"]["n"] == 3
+    assert metrics["legal_rate"]["overall"]["n"] == 3
 
 
 def test_legal_rate_requires_a_position_source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
