@@ -237,3 +237,19 @@ def test_rejects_non_dict_jsonl_row(tmp_path: Path) -> None:
             run_id=DEFAULT_RUN_ID,
             checkpoint=DEFAULT_CHECKPOINT,
         )
+
+
+def test_rejects_move_not_in_vocab(tmp_path: Path) -> None:
+    """A UCI string outside the tokenizer vocabulary must fail with the offending row id."""
+    data = tmp_path / "sequences.jsonl"
+    _write_jsonl(data, [{"id": "g1", "perspective": "white", "moves": ["e2e4", "z9z9"]}])
+    tokenizer = ChessTokenizer()
+
+    with pytest.raises(ValueError, match=r"g1.*z9z9"):
+        run_perplexity(
+            engine=_StubScorer(_UniformModel(vocab_size=tokenizer.vocab_size), tokenizer),
+            config=PerplexityConfig(data_path=data),
+            run_dir=tmp_path / "run",
+            run_id=DEFAULT_RUN_ID,
+            checkpoint=DEFAULT_CHECKPOINT,
+        )

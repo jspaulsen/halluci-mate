@@ -40,6 +40,7 @@ import torch
 from halluci_mate.chess_tokenizer import (
     BLACK_TOKEN_ID,
     DRAW_TOKEN_ID,
+    UNK_TOKEN_ID,
     WHITE_TOKEN_ID,
     ChessTokenizer,
 )
@@ -197,7 +198,15 @@ def _validate_row(row: dict[str, Any]) -> None:
 
 def _tokenize_sequence(row: dict[str, Any], *, tokenizer: ChessTokenizer) -> list[int]:
     token_ids = [_PERSPECTIVE_TOKEN_IDS[row["perspective"]]]
-    token_ids.extend(tokenizer.move_to_id(move) for move in row["moves"])
+    for move in row["moves"]:
+        move_id = tokenizer.move_to_id(move)
+        # ``move_to_id`` falls back to ``<UNK>`` for unknown UCI strings; that
+        # would silently degrade the score rather than reject bad input. Fail
+        # loudly here with the offending row id so a malformed dataset is
+        # immediately diagnosable.
+        if move_id == UNK_TOKEN_ID:
+            raise ValueError(f"perplexity row {row['id']!r} contains move {move!r} not in tokenizer vocabulary")
+        token_ids.append(move_id)
     if row.get("is_draw", False):
         token_ids.append(DRAW_TOKEN_ID)
     return token_ids
