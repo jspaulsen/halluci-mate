@@ -104,8 +104,19 @@ def compute_legal_rate(records: Iterable[Record]) -> float:
     is true (otherwise raw == played and the bit is trivially true).
     Returns 0.0 if there are no relevant records.
     """
-    legal = 0
+    return _legal_rate_tally(records).rate
+
+
+def _legal_rate_tally(records: Iterable[Record]) -> LegalRateBucket:
+    """Single source of truth for legal-rate counting across record types.
+
+    Both `PerMoveRecord` and `PerLegalRateRecord` carry a legality bit; this
+    helper consumes either (or both) and returns the bucket so callers that
+    need only the rate (`compute_legal_rate`) and callers that need the full
+    `n`/`legal`/`rate` shape (`_compute_legal_rate_aggregate`) share one pass.
+    """
     n = 0
+    legal = 0
     for r in records:
         if isinstance(r, PerMoveRecord):
             n += 1
@@ -113,7 +124,7 @@ def compute_legal_rate(records: Iterable[Record]) -> float:
         elif isinstance(r, PerLegalRateRecord):
             n += 1
             legal += r.legal
-    return legal / n if n else 0.0
+    return LegalRateBucket(n=n, legal=legal, rate=legal / n if n else 0.0)
 
 
 def compute_all(records: Iterable[Record], config: dict[str, Any]) -> dict[str, Any]:
@@ -135,15 +146,12 @@ def compute_all(records: Iterable[Record], config: dict[str, Any]) -> dict[str, 
 
 
 def _compute_legal_rate_aggregate(records: list[Record]) -> dict[str, Any]:
-    legal_rate_records = [r for r in records if isinstance(r, PerLegalRateRecord)]
-    n = len(legal_rate_records)
-    legal = sum(r.legal for r in legal_rate_records)
     # Match the `vs_stockfish` payload shape: nest under `overall` so the on-disk
     # path is always `legal_rate.overall.{n,legal,rate}`, regardless of evaluator.
     return {
         "evaluator": Evaluator.LEGAL_RATE.value,
         "legal_rate": {
-            "overall": asdict(LegalRateBucket(n=n, legal=legal, rate=legal / n if n else 0.0)),
+            "overall": asdict(_legal_rate_tally(records)),
         },
     }
 
