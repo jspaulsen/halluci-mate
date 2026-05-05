@@ -198,6 +198,9 @@ def _run_legal_rate_cmd(args: argparse.Namespace) -> None:
 
     engine = ChessInferenceEngine.from_checkpoint(args.checkpoint, constrained=False, device=args.device)
 
+    # No `extra_config` here: legal-rate uses argmax for the legality bit, so
+    # there are no engine-side sampling knobs whose effective values we'd need
+    # to persist into `config.json`. Mirrors the comment in vs-stockfish.
     n_records = run_legal_rate(
         engine=engine,
         config=config,
@@ -230,6 +233,9 @@ def _run_perplexity_cmd(args: argparse.Namespace) -> None:
 
     engine = ChessInferenceEngine.from_checkpoint(args.checkpoint, constrained=False, device=args.device)
 
+    # No `extra_config` here: perplexity scores known token sequences and
+    # never samples, so there are no engine-side sampling knobs to persist.
+    # Mirrors the comment in vs-stockfish.
     n_records = run_perplexity(
         engine=engine,
         config=config,
