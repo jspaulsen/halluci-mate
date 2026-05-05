@@ -169,17 +169,29 @@ def _build_config_payload(*, config: PerplexityConfig, run_id: str, checkpoint: 
 
 
 def _iter_sequences(path: Path, *, max_sequences: int | None) -> Iterator[dict[str, Any]]:
-    """Yield validated rows from ``path`` (jsonl), capped at ``max_sequences``."""
+    """Yield validated rows from ``path`` (jsonl), capped at ``max_sequences``.
+
+    Decode/validation errors are re-raised with the ``path:lineno`` of the
+    offending row so a malformed input file is diagnosable without stepping
+    through the bare ``json``/``ValueError`` traceback. Mirrors the pattern in
+    ``legal_rate._iter_fen_file``.
+    """
     yielded = 0
     with path.open(encoding="utf-8") as fp:
-        for raw in fp:
+        for lineno, raw in enumerate(fp, start=1):
             line = raw.strip()
             if not line:
                 continue
-            row = json.loads(line)
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"{path}:{lineno}: invalid JSON: {exc}") from exc
             if not isinstance(row, dict):
-                raise ValueError(f"perplexity input row must be a JSON object; got {type(row).__name__}: {row!r}")
-            _validate_row(row)
+                raise ValueError(f"{path}:{lineno}: perplexity input row must be a JSON object; got {type(row).__name__}: {row!r}")
+            try:
+                _validate_row(row)
+            except ValueError as exc:
+                raise ValueError(f"{path}:{lineno}: {exc}") from exc
             yield row
             yielded += 1
             if max_sequences is not None and yielded >= max_sequences:
