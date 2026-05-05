@@ -83,7 +83,8 @@ def main(argv: list[str] | None = None) -> None:
     args.func(args)
 
 
-def _add_vs_stockfish_args(parser: argparse.ArgumentParser) -> None:
+def _add_common_run_args(parser: argparse.ArgumentParser) -> None:
+    """Args shared by every fresh-run subcommand (`vs-stockfish`, `legal-rate`, `perplexity`)."""
     parser.add_argument("--checkpoint", required=True, help="Local checkpoint directory or Hugging Face repo id.")
     parser.add_argument(
         "--checkpoint-tag",
@@ -91,6 +92,11 @@ def _add_vs_stockfish_args(parser: argparse.ArgumentParser) -> None:
         help="Tag used in run-id; defaults to a sanitized form of --checkpoint. User-supplied tags must not contain '_'.",
     )
     parser.add_argument("--evals-dir", type=Path, default=DEFAULT_EVALS_DIR, help=f"Parent directory for run outputs (default: {DEFAULT_EVALS_DIR}).")
+    parser.add_argument("--device", default=None, help="Torch device (default: cuda if available, else cpu).")
+
+
+def _add_vs_stockfish_args(parser: argparse.ArgumentParser) -> None:
+    _add_common_run_args(parser)
     parser.add_argument("--stockfish", default="stockfish", help="Path to the stockfish binary (default: 'stockfish' on PATH).")
     parser.add_argument("--games", type=int, default=2, help="Number of games to play (default: 2).")
     parser.add_argument(
@@ -113,7 +119,6 @@ def _add_vs_stockfish_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--unconstrained", action="store_true", help="Disable legal-move masking for halluci-mate.")
     parser.add_argument("--record-top-k", type=int, default=5, help="K for the top-K candidates captured per record (0 = skip).")
     parser.add_argument("--blunder-threshold-cp", type=int, default=200, help="Centipawn loss threshold for is_blunder.")
-    parser.add_argument("--device", default=None, help="Torch device (default: cuda if available, else cpu).")
 
 
 def _run_vs_stockfish_cmd(args: argparse.Namespace) -> None:
@@ -162,14 +167,7 @@ def _run_vs_stockfish_cmd(args: argparse.Namespace) -> None:
 
 
 def _add_legal_rate_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--checkpoint", required=True, help="Local checkpoint directory or Hugging Face repo id.")
-    parser.add_argument(
-        "--checkpoint-tag",
-        default=None,
-        help="Tag used in run-id; defaults to a sanitized form of --checkpoint. User-supplied tags must not contain '_'.",
-    )
-    parser.add_argument("--evals-dir", type=Path, default=DEFAULT_EVALS_DIR, help=f"Parent directory for run outputs (default: {DEFAULT_EVALS_DIR}).")
-    parser.add_argument("--device", default=None, help="Torch device (default: cuda if available, else cpu).")
+    _add_common_run_args(parser)
 
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--positions", type=Path, default=None, help="Path to a file with one FEN per line.")
@@ -209,37 +207,18 @@ def _run_legal_rate_cmd(args: argparse.Namespace) -> None:
     )
 
     metrics = _aggregate_metrics(run_dir)
-    rate = _legal_rate_from_metrics(metrics)
+    # Trust the on-disk schema: `compute_all` for `LEGAL_RATE` always emits
+    # `legal_rate.overall.rate`, pinned by `metrics_test.test_compute_all_legal_rate_*`.
+    legal_rate_block = cast("dict[str, dict[str, float]]", metrics["legal_rate"])
+    rate = legal_rate_block["overall"]["rate"]
     print("\n=== Summary ===")
     print(f"Positions scored: {n_records}")
     print(f"legal_rate:       {rate:.4f}")
     print(f"Artifacts:        {run_dir}")
 
 
-def _legal_rate_from_metrics(metrics: dict[str, object]) -> float:
-    """Pull the overall legal-rate out of a `compute_all` payload, with a 0.0 fallback."""
-    block = metrics.get("legal_rate")
-    if not isinstance(block, dict):
-        return 0.0
-    # `metrics` is `dict[str, object]`; `isinstance(block, dict)` narrows to
-    # `dict[Never, Never]` under the project's type checker, so re-cast to a
-    # generic str-keyed payload before walking nested keys.
-    overall = cast("dict[str, object]", block).get("overall")
-    if not isinstance(overall, dict):
-        return 0.0
-    rate = cast("dict[str, object]", overall).get("rate")
-    return float(rate) if isinstance(rate, (int, float)) else 0.0
-
-
 def _add_perplexity_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--checkpoint", required=True, help="Local checkpoint directory or Hugging Face repo id.")
-    parser.add_argument(
-        "--checkpoint-tag",
-        default=None,
-        help="Tag used in run-id; defaults to a sanitized form of --checkpoint. User-supplied tags must not contain '_'.",
-    )
-    parser.add_argument("--evals-dir", type=Path, default=DEFAULT_EVALS_DIR, help=f"Parent directory for run outputs (default: {DEFAULT_EVALS_DIR}).")
-    parser.add_argument("--device", default=None, help="Torch device (default: cuda if available, else cpu).")
+    _add_common_run_args(parser)
     parser.add_argument("--data", type=Path, required=True, help="Path to a jsonl file of held-out sequences.")
     parser.add_argument("--max-sequences", type=int, default=None, help="Stop after this many sequences (default: process all).")
 

@@ -109,10 +109,10 @@ def compute_legal_rate(records: Iterable[Record]) -> float:
     for r in records:
         if isinstance(r, PerMoveRecord):
             n += 1
-            legal += int(r.raw_sample_legal)
+            legal += r.raw_sample_legal
         elif isinstance(r, PerLegalRateRecord):
             n += 1
-            legal += int(r.legal)
+            legal += r.legal
     return legal / n if n else 0.0
 
 
@@ -150,25 +150,18 @@ def _compute_legal_rate_aggregate(records: list[Record]) -> dict[str, Any]:
 
 def _compute_perplexity(records: list[Record]) -> dict[str, Any]:
     perp_records = [r for r in records if isinstance(r, PerPerplexityRecord)]
-    all_logprobs: list[float] = [lp for r in perp_records for lp in r.token_logprobs]
+    all_logprobs = [lp for r in perp_records for lp in r.token_logprobs]
     num_tokens = len(all_logprobs)
-    if num_tokens == 0:
-        return {
-            "evaluator": Evaluator.PERPLEXITY.value,
-            "num_sequences": len(perp_records),
-            "num_tokens": 0,
-            "mean_nll": 0.0,
-            "bits_per_token": 0.0,
-            "perplexity": 0.0,
-        }
-    mean_nll = -sum(all_logprobs) / num_tokens
+    # Empty input collapses every aggregate to 0.0 (not exp(0) = 1.0) so a
+    # zero-record run is unambiguous in `metrics.json`.
+    mean_nll = -sum(all_logprobs) / num_tokens if num_tokens else 0.0
     return {
         "evaluator": Evaluator.PERPLEXITY.value,
         "num_sequences": len(perp_records),
         "num_tokens": num_tokens,
         "mean_nll": mean_nll,
-        "bits_per_token": mean_nll / math.log(2),
-        "perplexity": math.exp(mean_nll),
+        "bits_per_token": mean_nll / math.log(2) if num_tokens else 0.0,
+        "perplexity": math.exp(mean_nll) if num_tokens else 0.0,
     }
 
 

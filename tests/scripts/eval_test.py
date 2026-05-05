@@ -72,15 +72,17 @@ class _StubEngine:
     ) -> MovePrediction:
         del record_top_k
         played = next(iter(game.board.legal_moves))
-        # ``legal-rate`` flips this off explicitly; all other paths leave it None.
-        raw_legal = True
+        # ``legal-rate`` invokes us with ``constrained=False`` (no masking, no
+        # played move); ``vs-stockfish`` leaves it ``None`` (its default,
+        # masking on). Reflect that asymmetry on ``played_move`` / ``mask_used``.
+        masked = constrained is not False
         return MovePrediction(
-            played_move=played if constrained is not False else None,
+            played_move=played if masked else None,
             model_move_uci=played.uci(),
             raw_sample_move_uci=played.uci(),
-            raw_sample_legal=raw_legal,
+            raw_sample_legal=True,
             model_top_k=[TopKEntry(move=played.uci(), logprob=-0.1)],
-            mask_used=constrained is not False,
+            mask_used=masked,
         )
 
 

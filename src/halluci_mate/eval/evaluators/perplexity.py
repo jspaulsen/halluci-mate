@@ -196,8 +196,7 @@ def _validate_row(row: dict[str, Any]) -> None:
 
 
 def _tokenize_sequence(row: dict[str, Any], *, tokenizer: ChessTokenizer) -> list[int]:
-    perspective_id = _PERSPECTIVE_TOKEN_IDS[row["perspective"]]
-    token_ids: list[int] = [perspective_id]
+    token_ids = [_PERSPECTIVE_TOKEN_IDS[row["perspective"]]]
     token_ids.extend(tokenizer.move_to_id(move) for move in row["moves"])
     if row.get("is_draw", False):
         token_ids.append(DRAW_TOKEN_ID)
