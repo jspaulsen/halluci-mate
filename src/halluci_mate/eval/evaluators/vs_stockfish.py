@@ -10,13 +10,13 @@ Out of scope (separate tickets): Stockfish per-position analysis
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import TYPE_CHECKING, Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 import chess
 import chess.engine
 import chess.pgn
 
-from halluci_mate.eval.records import Evaluator, PerGameRecord, PerMoveRecord, Phase, Side
+from halluci_mate.eval.records import Evaluator, GameResult, PerGameRecord, PerMoveRecord, Phase, Side, Termination
 from halluci_mate.eval.runs import RunWriter
 from halluci_mate.game import Game, Perspective
 
@@ -34,7 +34,6 @@ _OPENING_PLY_MAX = 20
 _MIDDLEGAME_PLY_MAX = 60
 
 HalluciColor = Literal["white", "black", "alternate"]
-Termination = Literal["natural", "max-plies", "stockfish-resigned", "illegal-move"]
 
 
 class _StockfishEngine(Protocol):
@@ -90,7 +89,7 @@ class GameOutcome:
 
     game_id: str
     halluci_color: chess.Color
-    result: str
+    result: GameResult
     ply_count: int
     termination: Termination
     pgn: str
@@ -151,6 +150,9 @@ def run_vs_stockfish(
                 event_id_start=event_id,
             )
             outcomes.append(outcome)
+            # `_play_one_game` returns the next-free event_id (one past the
+            # last per-move record for this game); the per-game record
+            # consumes that slot, then we bump for the next game's first move.
             writer.append_record(
                 PerGameRecord(
                     run_id=run_id,
@@ -238,7 +240,9 @@ def _play_one_game(
         GameOutcome(
             game_id=game_id,
             halluci_color=halluci_color,
-            result=pgn.headers["Result"],
+            # `_finalize_pgn` writes one of the four PGN result strings — Pydantic
+            # re-validates this when it lands on `PerGameRecord.result`.
+            result=cast("GameResult", pgn.headers["Result"]),
             ply_count=state.game.board.ply(),
             termination=state.termination,
             pgn=str(pgn),

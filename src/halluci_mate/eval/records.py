@@ -14,9 +14,16 @@ forces filler values into one column or the other.
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Discriminator, Tag, TypeAdapter
+
+# PGN-style game outcome strings; `*` = unfinished (max-plies, illegal-move, etc.).
+GameResult = Literal["1-0", "0-1", "1/2-1/2", "*"]
+
+# Why a vs_stockfish game ended. Lives here (not on the evaluator) so
+# `PerGameRecord` can pin the field without a circular import.
+Termination = Literal["natural", "max-plies", "stockfish-resigned", "illegal-move"]
 
 
 class Evaluator(StrEnum):
@@ -128,12 +135,18 @@ class PerGameRecord(RecordHeader):
 
     Emitted once per game by the evaluator, after the last per-move record
     for that game.
+
+    The ``result`` field is the discriminator tag for this record class —
+    see ``_discriminate_record``. Do not add a ``result`` field to any
+    other record class without also updating the discriminator, or new
+    records will silently validate as ``PerGameRecord`` and lose their
+    payload.
     """
 
     game_id: str
     model_side: Side
-    result: str
-    termination: str
+    result: GameResult
+    termination: Termination
     ply_count: int
 
 

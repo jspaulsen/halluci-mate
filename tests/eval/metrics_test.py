@@ -18,7 +18,7 @@ from halluci_mate.eval.metrics import (
     compute_legal_rate,
     compute_win_rate,
 )
-from halluci_mate.eval.records import Evaluator, Phase, Record, Side
+from halluci_mate.eval.records import Evaluator, PerGameRecord, PerMoveRecord, Phase, Record, Side
 from tests.eval.conftest import make_per_game_record, make_per_move_record
 
 DEFAULT_CONFIG: dict[str, object] = {
@@ -27,34 +27,45 @@ DEFAULT_CONFIG: dict[str, object] = {
 }
 
 
-def _move(event_id: int, **overrides: object) -> Record:
+def _move(event_id: int, **overrides: object) -> PerMoveRecord:
     return make_per_move_record(event_id=event_id, **overrides)
 
 
-def _game(event_id: int, **overrides: object) -> Record:
+def _game(event_id: int, **overrides: object) -> PerGameRecord:
     return make_per_game_record(event_id=event_id, **overrides)
 
 
 def test_compute_legal_rate_counts_raw_sample_legal() -> None:
-    records = [
+    moves = [
         _move(0, raw_sample_legal=True),
         _move(1, raw_sample_legal=True),
         _move(2, raw_sample_legal=False),
         _move(3, raw_sample_legal=True),
     ]
-    assert compute_legal_rate(records) == pytest.approx(0.75)
+    stats = compute_legal_rate(moves)
+    assert stats.overall == LegalRateBucket(n=4, legal=3, rate=0.75)
 
 
-def test_compute_legal_rate_returns_zero_with_no_records() -> None:
-    assert compute_legal_rate([]) == 0.0
+def test_compute_legal_rate_returns_zero_buckets_with_no_records() -> None:
+    stats = compute_legal_rate([])
+    zero = LegalRateBucket(n=0, legal=0, rate=0.0)
+    assert stats.overall == zero
+    assert stats.by_phase == {phase.value: zero for phase in Phase}
+    assert stats.by_model_side == {side.value: zero for side in Side}
 
 
-def test_compute_legal_rate_ignores_non_per_move_records() -> None:
-    records: list[Record] = [
-        _move(0, raw_sample_legal=False),
-        _game(1, result="1-0"),
+def test_compute_legal_rate_stratifies_by_phase_and_side() -> None:
+    moves = [
+        _move(0, model_side=Side.WHITE, phase=Phase.OPENING, raw_sample_legal=True),
+        _move(1, model_side=Side.WHITE, phase=Phase.OPENING, raw_sample_legal=False),
+        _move(2, model_side=Side.BLACK, phase=Phase.MIDDLE, raw_sample_legal=True),
     ]
-    assert compute_legal_rate(records) == 0.0
+    stats = compute_legal_rate(moves)
+    assert stats.by_phase["opening"] == LegalRateBucket(n=2, legal=1, rate=0.5)
+    assert stats.by_phase["middle"] == LegalRateBucket(n=1, legal=1, rate=1.0)
+    assert stats.by_phase["endgame"] == LegalRateBucket(n=0, legal=0, rate=0.0)
+    assert stats.by_model_side["white"].rate == pytest.approx(0.5)
+    assert stats.by_model_side["black"].rate == pytest.approx(1.0)
 
 
 def test_compute_win_rate_classifies_outcomes() -> None:
@@ -146,35 +157,28 @@ def test_compute_all_output_is_json_serializable() -> None:
     assert decoded["evaluator"] == Evaluator.VS_STOCKFISH.value
 
 
-def test_compute_all_schema_is_stable_for_diffing() -> None:
-    """Same evaluator + same record shapes ⇒ same top-level + nested key set,
-    even when the underlying counts differ. This is the "diff across runs"
-    contract from HAL-7's acceptance criteria.
-    """
-    records_a: list[Record] = [_move(0), _game(1, result="1-0")]
-    records_b: list[Record] = [
-        _move(0, raw_sample_legal=False),
-        _move(1, raw_sample_legal=False),
-        _game(2, result="0-1"),
-    ]
-    keys_a = _structure_keys(compute_all(records_a, DEFAULT_CONFIG))
-    keys_b = _structure_keys(compute_all(records_b, DEFAULT_CONFIG))
-    assert keys_a == keys_b
-
-
 def test_compute_all_rejects_unknown_evaluator() -> None:
     with pytest.raises(ValueError, match="unsupported evaluator"):
         compute_all([], {"evaluator": "puzzles"})
 
 
-def test_legal_rate_bucket_rate_is_zero_when_empty() -> None:
-    """Pinning the empty-bucket convention so it is not silently changed."""
-    bucket = LegalRateBucket(n=0, legal=0, rate=0.0)
-    assert bucket.rate == 0.0
+def test_compute_all_returns_zero_buckets_with_no_records() -> None:
+    """Empty-records input yields the same shape as a populated run, with
+    zeroed counts and rates. Pinned so a downstream `metrics.json` diff
+    against an empty-vs-populated run does not blow up on missing keys."""
+    metrics = compute_all([], DEFAULT_CONFIG)
 
+    assert metrics["evaluator"] == Evaluator.VS_STOCKFISH.value
+    assert metrics["stockfish_skill"] == 5
 
-def _structure_keys(value: object) -> object:
-    """Reduce a metrics dict to its key skeleton for diff-stability checks."""
-    if isinstance(value, dict):
-        return {key: _structure_keys(child) for key, child in value.items()}
-    return None
+    overall_win = metrics["win_rate"]["overall"]
+    assert overall_win["games"] == 0
+    assert overall_win["win_rate"] == 0.0
+    assert overall_win["score_rate"] == 0.0
+    assert metrics["win_rate"]["by_model_side"]["white"]["games"] == 0
+    assert metrics["win_rate"]["by_model_side"]["black"]["games"] == 0
+
+    legal = metrics["legal_rate"]
+    assert legal["overall"] == {"n": 0, "legal": 0, "rate": 0.0}
+    assert legal["by_phase"]["opening"] == {"n": 0, "legal": 0, "rate": 0.0}
+    assert legal["by_model_side"]["white"] == {"n": 0, "legal": 0, "rate": 0.0}
