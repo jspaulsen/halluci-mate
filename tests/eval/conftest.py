@@ -12,6 +12,7 @@ from typing import Any
 
 from halluci_mate.eval.records import (
     Evaluator,
+    PerGameRecord,
     PerMoveRecord,
     PerPuzzleRecord,
     Phase,
@@ -55,6 +56,23 @@ def make_per_move_record(event_id: int = 0, **overrides: Any) -> PerMoveRecord:
     }
     fields.update(overrides)
     return PerMoveRecord(**fields)
+
+
+def make_per_game_record(event_id: int = 0, **overrides: Any) -> PerGameRecord:
+    """Build a `PerGameRecord` with sensible defaults; overrides win."""
+    fields: dict[str, Any] = {
+        "run_id": DEFAULT_RUN_ID,
+        "event_id": event_id,
+        "evaluator": Evaluator.VS_STOCKFISH,
+        "checkpoint": DEFAULT_CHECKPOINT,
+        "game_id": f"game-{event_id:04d}",
+        "model_side": Side.WHITE,
+        "result": "1-0",
+        "termination": "natural",
+        "ply_count": 40,
+    }
+    fields.update(overrides)
+    return PerGameRecord(**fields)
 
 
 def make_per_puzzle_record(event_id: int = 0, **overrides: Any) -> PerPuzzleRecord:

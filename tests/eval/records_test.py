@@ -8,6 +8,7 @@ import pytest
 
 from halluci_mate.eval.records import (
     Evaluator,
+    PerGameRecord,
     PerLegalRateRecord,
     PerMoveRecord,
     PerPerplexityRecord,
@@ -19,6 +20,7 @@ from halluci_mate.eval.records import (
 from tests.eval.conftest import (
     DEFAULT_CHECKPOINT,
     START_FEN,
+    make_per_game_record,
     make_per_move_record,
     make_per_puzzle_record,
 )
@@ -28,6 +30,12 @@ PER_MOVE = make_per_move_record(
     run_id="2026-04-19T20-15-00_ckpt-9660_vs-stockfish",
     game_id="g0",
     ply=1,
+)
+
+PER_GAME = make_per_game_record(
+    event_id=5,
+    run_id="2026-04-19T20-15-00_ckpt-9660_vs-stockfish",
+    game_id="g0",
 )
 
 PER_PUZZLE = make_per_puzzle_record(
@@ -59,6 +67,7 @@ PER_PERPLEXITY = PerPerplexityRecord(
 
 ROUND_TRIP_CASES: list[Record] = [
     PER_MOVE,
+    PER_GAME,
     PER_PUZZLE,
     PER_LEGAL_RATE,
     PER_PERPLEXITY,
@@ -91,7 +100,8 @@ def test_record_discriminator_keys_are_disjoint() -> None:
     lose payload. This test pins that invariant for future record additions.
     """
     discriminator_keys = {
-        PerMoveRecord: "game_id",
+        PerMoveRecord: "ply",
+        PerGameRecord: "result",
         PerPuzzleRecord: "puzzle_id",
         PerPerplexityRecord: "token_logprobs",
         PerLegalRateRecord: "legal",
