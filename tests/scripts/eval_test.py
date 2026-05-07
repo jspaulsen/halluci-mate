@@ -26,7 +26,7 @@ from halluci_mate.eval.runs import (
     make_run_id,
 )
 from halluci_mate.inference import MovePrediction
-from tests.eval.conftest import DEFAULT_CHECKPOINT, make_per_game_record, make_per_move_record
+from tests.helpers.eval_records import DEFAULT_CHECKPOINT, make_per_game_record, make_per_move_record
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -64,11 +64,10 @@ class _StubStockfish:
     """Stand-in for ``chess.engine.SimpleEngine``. Plays the last legal move."""
 
     def __init__(self) -> None:
-        self.configured: dict[str, Any] = {}
         self.quit_called = False
 
     def configure(self, options: dict[str, Any]) -> None:
-        self.configured = dict(options)
+        del options
 
     def play(self, board: chess.Board, limit: chess.engine.Limit) -> chess.engine.PlayResult:
         del limit
@@ -79,8 +78,27 @@ class _StubStockfish:
 
 
 def _patch_engines(monkeypatch: pytest.MonkeyPatch, stub_stockfish: _StubStockfish) -> None:
-    monkeypatch.setattr(eval_cli.ChessInferenceEngine, "from_checkpoint", classmethod(lambda cls, *a, **kw: _StubEngine()))
-    monkeypatch.setattr(eval_cli.chess.engine.SimpleEngine, "popen_uci", staticmethod(lambda *_a, **_kw: stub_stockfish))
+    monkeypatch.setattr(eval_cli.ChessInferenceEngine, "from_checkpoint", lambda *_a, **_kw: _StubEngine())
+    monkeypatch.setattr(eval_cli.chess.engine.SimpleEngine, "popen_uci", lambda *_a, **_kw: stub_stockfish)
+
+
+def _seed_run(evals_dir: Path, *, with_per_game: bool = True) -> tuple[Path, str]:
+    run_id = make_run_id("stub-ckpt", Evaluator.VS_STOCKFISH)
+    run_dir = evals_dir / run_id
+    writer = RunWriter(run_dir)
+    writer.write_config(
+        {
+            "evaluator": Evaluator.VS_STOCKFISH.value,
+            "run_id": run_id,
+            "checkpoint": DEFAULT_CHECKPOINT,
+            "stockfish_skill": 0,
+        }
+    )
+    with writer:
+        writer.append_record(make_per_move_record(event_id=0, run_id=run_id))
+        if with_per_game:
+            writer.append_record(make_per_game_record(event_id=1, run_id=run_id))
+    return run_dir, run_id
 
 
 def test_vs_stockfish_smoke_writes_metrics_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -124,21 +142,7 @@ def test_vs_stockfish_smoke_writes_metrics_json(tmp_path: Path, monkeypatch: pyt
 def test_report_recomputes_metrics_without_touching_records(tmp_path: Path) -> None:
     """`report <run-id>` rewrites metrics.json from existing records.jsonl."""
     evals_dir = tmp_path / "evals"
-    run_id = make_run_id("stub-ckpt", Evaluator.VS_STOCKFISH)
-    run_dir = evals_dir / run_id
-
-    writer = RunWriter(run_dir)
-    writer.write_config(
-        {
-            "evaluator": Evaluator.VS_STOCKFISH.value,
-            "run_id": run_id,
-            "checkpoint": DEFAULT_CHECKPOINT,
-            "stockfish_skill": 0,
-        }
-    )
-    with writer:
-        writer.append_record(make_per_move_record(event_id=0, run_id=run_id))
-        writer.append_record(make_per_game_record(event_id=1, run_id=run_id))
+    run_dir, run_id = _seed_run(evals_dir)
 
     records_bytes_before = (run_dir / RECORDS_FILENAME).read_bytes()
 
@@ -162,20 +166,7 @@ def test_report_missing_run_dir_raises(tmp_path: Path) -> None:
 def test_report_recovers_from_corrupt_metrics(tmp_path: Path) -> None:
     """A pre-existing malformed metrics.json must not block recomputation."""
     evals_dir = tmp_path / "evals"
-    run_id = make_run_id("stub-ckpt", Evaluator.VS_STOCKFISH)
-    run_dir = evals_dir / run_id
-
-    writer = RunWriter(run_dir)
-    writer.write_config(
-        {
-            "evaluator": Evaluator.VS_STOCKFISH.value,
-            "run_id": run_id,
-            "checkpoint": DEFAULT_CHECKPOINT,
-            "stockfish_skill": 0,
-        }
-    )
-    with writer:
-        writer.append_record(make_per_move_record(event_id=0, run_id=run_id))
+    run_dir, run_id = _seed_run(evals_dir, with_per_game=False)
     (run_dir / METRICS_FILENAME).write_text("not json\n", encoding="utf-8")
 
     eval_cli.main(["report", run_id, "--evals-dir", str(evals_dir)])
