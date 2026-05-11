@@ -244,11 +244,18 @@ def _run_perplexity_cmd(args: argparse.Namespace) -> None:
     )
 
     metrics = _aggregate_metrics(run_dir)
+    # Trust the on-disk schema: `compute_all` for `PERPLEXITY` always emits
+    # these four keys, pinned by `metrics_test.test_compute_all_perplexity_*`
+    # (including the empty-records case). `.get(..., default)` would hide a
+    # schema regression by silently printing zero.
+    num_tokens = cast("int", metrics["num_tokens"])
+    mean_nll = cast("float", metrics["mean_nll"])
+    bits_per_token = cast("float", metrics["bits_per_token"])
     print("\n=== Summary ===")
     print(f"Sequences scored: {n_records}")
-    print(f"Tokens scored:    {metrics.get('num_tokens', 0)}")
-    print(f"mean NLL:         {metrics.get('mean_nll', 0.0):.4f}")
-    print(f"bits/token:       {metrics.get('bits_per_token', 0.0):.4f}")
+    print(f"Tokens scored:    {num_tokens}")
+    print(f"mean NLL:         {mean_nll:.4f}")
+    print(f"bits/token:       {bits_per_token:.4f}")
     print(f"Artifacts:        {run_dir}")
 
 
