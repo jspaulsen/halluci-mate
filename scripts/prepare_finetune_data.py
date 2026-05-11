@@ -16,11 +16,12 @@ Usage:
 
 from __future__ import annotations
 
-import argparse
 import logging
 import shutil
 from pathlib import Path
+from typing import Annotated
 
+import typer
 from datasets import load_dataset
 
 from halluci_mate.data_preparation import create_tokenizer, passes_highelo_filter, save_splits, stream_and_shard
@@ -59,25 +60,23 @@ def prepare_dataset(
     save_splits(shard_dir, total_examples, output_dir)
 
 
-def main() -> None:
+def main(
+    num_games: Annotated[int, typer.Option(help="Target number of post-filter games")] = DEFAULT_NUM_GAMES,
+    output_dir: Annotated[Path, typer.Option(help="Output directory for Parquet files")] = DEFAULT_OUTPUT_DIR,
+    min_elo: Annotated[int, typer.Option(help="Minimum Elo for both players")] = DEFAULT_MIN_ELO,
+    max_rating_diff: Annotated[int, typer.Option(help="Max |RatingDiff| for either player")] = DEFAULT_MAX_RATING_DIFF,
+    max_elo_gap: Annotated[int, typer.Option(help="Max |WhiteElo - BlackElo|")] = DEFAULT_MAX_ELO_GAP,
+) -> None:
+    """Prepare high-Elo Lichess data for fine-tuning."""
     configure_script_logging(__name__)
-
-    parser = argparse.ArgumentParser(description="Prepare high-Elo Lichess data for fine-tuning.")
-    parser.add_argument("--num-games", type=int, default=DEFAULT_NUM_GAMES, help="Target number of post-filter games")
-    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR, help="Output directory for Parquet files")
-    parser.add_argument("--min-elo", type=int, default=DEFAULT_MIN_ELO, help="Minimum Elo for both players")
-    parser.add_argument("--max-rating-diff", type=int, default=DEFAULT_MAX_RATING_DIFF, help="Max |RatingDiff| for either player")
-    parser.add_argument("--max-elo-gap", type=int, default=DEFAULT_MAX_ELO_GAP, help="Max |WhiteElo - BlackElo|")
-    args = parser.parse_args()
-
     prepare_dataset(
-        num_games=args.num_games,
-        output_dir=args.output_dir,
-        min_elo=args.min_elo,
-        max_rating_diff=args.max_rating_diff,
-        max_elo_gap=args.max_elo_gap,
+        num_games=num_games,
+        output_dir=output_dir,
+        min_elo=min_elo,
+        max_rating_diff=max_rating_diff,
+        max_elo_gap=max_elo_gap,
     )
 
 
 if __name__ == "__main__":
-    main()
+    typer.run(main)

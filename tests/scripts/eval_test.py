@@ -272,7 +272,7 @@ def test_legal_rate_smoke_with_pgn_sampling(tmp_path: Path, monkeypatch: pytest.
 
 
 def test_legal_rate_requires_a_position_source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """argparse mutually exclusive group rejects missing source."""
+    """CLI mutual-exclusion validator rejects a missing position source."""
     _patch_engine_only(monkeypatch)
     with pytest.raises(SystemExit):
         eval_cli.main(

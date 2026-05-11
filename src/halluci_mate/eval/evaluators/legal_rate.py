@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 
 # Default reservoir size for the PGN sampler. Lives on the evaluator (not the
 # CLI) so ``LegalRateConfig`` and any other caller share one source of truth;
-# ``scripts/eval.py`` imports it for the argparse default.
+# ``scripts/eval.py`` imports it for the CLI default.
 DEFAULT_SAMPLE_N = 10_000
 
 
