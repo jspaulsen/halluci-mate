@@ -28,7 +28,7 @@ from typing import cast
 import chess
 import chess.engine
 
-from halluci_mate.eval.evaluators.legal_rate import LegalRateConfig, run_legal_rate
+from halluci_mate.eval.evaluators.legal_rate import DEFAULT_SAMPLE_N, LegalRateConfig, run_legal_rate
 from halluci_mate.eval.evaluators.perplexity import PerplexityConfig, run_perplexity
 from halluci_mate.eval.evaluators.vs_stockfish import (
     STOCKFISH_SKILL_MAX,
@@ -43,7 +43,6 @@ from halluci_mate.eval.runs import RunReader, RunWriter, make_run_id, resolve_ch
 from halluci_mate.inference import ChessInferenceEngine
 
 DEFAULT_EVALS_DIR = Path("evals")
-DEFAULT_LEGAL_RATE_SAMPLE_N = 10_000
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -180,8 +179,8 @@ def _add_legal_rate_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--n",
         type=int,
-        default=DEFAULT_LEGAL_RATE_SAMPLE_N,
-        help=f"Number of positions to sample from the PGN source (default: {DEFAULT_LEGAL_RATE_SAMPLE_N}). Ignored when --positions is set.",
+        default=DEFAULT_SAMPLE_N,
+        help=f"Number of positions to sample from the PGN source (default: {DEFAULT_SAMPLE_N}). Ignored when --positions is set.",
     )
     parser.add_argument("--seed", type=int, default=0, help="Seed for the PGN sampler (default: 0). Ignored when --positions is set.")
 

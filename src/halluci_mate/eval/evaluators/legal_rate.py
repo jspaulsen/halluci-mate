@@ -33,6 +33,11 @@ if TYPE_CHECKING:
 
     from halluci_mate.inference import Predictor
 
+# Default reservoir size for the PGN sampler. Lives on the evaluator (not the
+# CLI) so ``LegalRateConfig`` and any other caller share one source of truth;
+# ``scripts/eval.py`` imports it for the argparse default.
+DEFAULT_SAMPLE_N = 10_000
+
 
 @dataclass(frozen=True)
 class LegalRateConfig:
@@ -46,7 +51,7 @@ class LegalRateConfig:
 
     positions_path: Path | None = None
     sample_from_games_path: Path | None = None
-    sample_n: int = 10_000
+    sample_n: int = DEFAULT_SAMPLE_N
     seed: int = 0
 
     def __post_init__(self) -> None:
