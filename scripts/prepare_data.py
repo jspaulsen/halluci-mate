@@ -19,11 +19,12 @@ Usage:
 
 from __future__ import annotations
 
-import argparse
 import logging
 import shutil
 from pathlib import Path
+from typing import Annotated
 
+import typer
 from datasets import load_dataset
 
 from halluci_mate.data_preparation import create_tokenizer, save_splits, stream_and_shard
@@ -58,16 +59,14 @@ def prepare_dataset(
     save_splits(shard_dir, total_examples, output_dir)
 
 
-def main() -> None:
+def main(
+    num_games: Annotated[int, typer.Option(help="Number of games to process")] = DEFAULT_NUM_GAMES,
+    output_dir: Annotated[Path, typer.Option(help="Output directory for Parquet files")] = DEFAULT_OUTPUT_DIR,
+) -> None:
+    """Prepare Lichess data for training."""
     configure_script_logging(__name__)
-
-    parser = argparse.ArgumentParser(description="Prepare Lichess data for training.")
-    parser.add_argument("--num-games", type=int, default=DEFAULT_NUM_GAMES, help="Number of games to process")
-    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR, help="Output directory for Parquet files")
-    args = parser.parse_args()
-
-    prepare_dataset(num_games=args.num_games, output_dir=args.output_dir)
+    prepare_dataset(num_games=num_games, output_dir=output_dir)
 
 
 if __name__ == "__main__":
-    main()
+    typer.run(main)

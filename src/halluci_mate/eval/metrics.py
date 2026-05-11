@@ -17,6 +17,7 @@ module's.
 
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
@@ -24,7 +25,9 @@ from typing import TYPE_CHECKING, Any
 from halluci_mate.eval.records import (
     Evaluator,
     PerGameRecord,
+    PerLegalRateRecord,
     PerMoveRecord,
+    PerPerplexityRecord,
     Phase,
     Side,
 )
@@ -107,6 +110,25 @@ def compute_legal_rate(moves: list[PerMoveRecord]) -> LegalRateStats:
     )
 
 
+def _legal_rate_tally(records: Iterable[Record]) -> LegalRateBucket:
+    """Cross-record-type legal-rate counting for the LEGAL_RATE evaluator.
+
+    Both `PerMoveRecord` and `PerLegalRateRecord` carry a legality bit;
+    `_compute_legal_rate_aggregate` consumes either (or both) through this
+    helper so its on-disk payload shape stays aligned with `vs_stockfish`.
+    """
+    n = 0
+    legal = 0
+    for r in records:
+        if isinstance(r, PerMoveRecord):
+            n += 1
+            legal += r.raw_sample_legal
+        elif isinstance(r, PerLegalRateRecord):
+            n += 1
+            legal += r.legal
+    return LegalRateBucket(n=n, legal=legal, rate=legal / n if n else 0.0)
+
+
 def compute_all(records: Iterable[Record], config: dict[str, Any]) -> dict[str, Any]:
     """Return the full aggregate dict, dispatching on the evaluator name.
 
@@ -120,7 +142,39 @@ def compute_all(records: Iterable[Record], config: dict[str, Any]) -> dict[str, 
     # `Evaluator -> compute fn` dispatch table.
     if evaluator == Evaluator.VS_STOCKFISH.value:
         return _compute_vs_stockfish(records_list, config)
+    if evaluator == Evaluator.LEGAL_RATE.value:
+        return _compute_legal_rate_aggregate(records_list)
+    if evaluator == Evaluator.PERPLEXITY.value:
+        return _compute_perplexity(records_list)
     raise ValueError(f"compute_all: unsupported evaluator {evaluator!r}")
+
+
+def _compute_legal_rate_aggregate(records: list[Record]) -> dict[str, Any]:
+    # Match the `vs_stockfish` payload shape: nest under `overall` so the on-disk
+    # path is always `legal_rate.overall.{n,legal,rate}`, regardless of evaluator.
+    return {
+        "evaluator": Evaluator.LEGAL_RATE.value,
+        "legal_rate": {
+            "overall": asdict(_legal_rate_tally(records)),
+        },
+    }
+
+
+def _compute_perplexity(records: list[Record]) -> dict[str, Any]:
+    perp_records = [r for r in records if isinstance(r, PerPerplexityRecord)]
+    all_logprobs = [lp for r in perp_records for lp in r.token_logprobs]
+    num_tokens = len(all_logprobs)
+    # Empty input collapses every aggregate to 0.0 (not exp(0) = 1.0) so a
+    # zero-record run is unambiguous in `metrics.json`.
+    mean_nll = -sum(all_logprobs) / num_tokens if num_tokens else 0.0
+    return {
+        "evaluator": Evaluator.PERPLEXITY.value,
+        "num_sequences": len(perp_records),
+        "num_tokens": num_tokens,
+        "mean_nll": mean_nll,
+        "bits_per_token": mean_nll / math.log(2) if num_tokens else 0.0,
+        "perplexity": math.exp(mean_nll) if num_tokens else 0.0,
+    }
 
 
 def _compute_vs_stockfish(records: list[Record], config: dict[str, Any]) -> dict[str, Any]:
@@ -163,7 +217,7 @@ def _winrate_bucket(games: list[PerGameRecord]) -> WinRateBucket:
 
 
 def _legal_rate_bucket(moves: list[PerMoveRecord]) -> LegalRateBucket:
-    legal = sum(1 for m in moves if m.raw_sample_legal)
+    legal = sum(m.raw_sample_legal for m in moves)
     rate = legal / len(moves) if moves else 0.0
     return LegalRateBucket(n=len(moves), legal=legal, rate=rate)
 

@@ -11,7 +11,9 @@ from typing import Any
 from halluci_mate.eval.records import (
     Evaluator,
     PerGameRecord,
+    PerLegalRateRecord,
     PerMoveRecord,
+    PerPerplexityRecord,
     PerPuzzleRecord,
     Phase,
     Side,
@@ -90,3 +92,34 @@ def make_per_puzzle_record(event_id: int = 0, **overrides: Any) -> PerPuzzleReco
     }
     fields.update(overrides)
     return PerPuzzleRecord(**fields)
+
+
+def make_per_legal_rate_record(event_id: int = 0, **overrides: Any) -> PerLegalRateRecord:
+    """Build a `PerLegalRateRecord` with sensible defaults; overrides win."""
+    fields: dict[str, Any] = {
+        "run_id": DEFAULT_RUN_ID,
+        "event_id": event_id,
+        "evaluator": Evaluator.LEGAL_RATE,
+        "checkpoint": DEFAULT_CHECKPOINT,
+        "position_id": f"pos{event_id}",
+        "fen": START_FEN,
+        "model_move": "e2e4",
+        "legal": True,
+    }
+    fields.update(overrides)
+    return PerLegalRateRecord(**fields)
+
+
+def make_per_perplexity_record(event_id: int = 0, **overrides: Any) -> PerPerplexityRecord:
+    """Build a `PerPerplexityRecord` with sensible defaults; overrides win."""
+    fields: dict[str, Any] = {
+        "run_id": DEFAULT_RUN_ID,
+        "event_id": event_id,
+        "evaluator": Evaluator.PERPLEXITY,
+        "checkpoint": DEFAULT_CHECKPOINT,
+        "position_id": f"seq{event_id}",
+        "fen": START_FEN,
+        "token_logprobs": [-0.1, -0.2, -0.3],
+    }
+    fields.update(overrides)
+    return PerPerplexityRecord(**fields)
