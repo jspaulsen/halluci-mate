@@ -266,11 +266,13 @@ def _add_report_args(parser: argparse.ArgumentParser) -> None:
 
 def _run_report_cmd(args: argparse.Namespace) -> None:
     run_dir = args.evals_dir / args.run_id
-    if not run_dir.is_dir():
+    if not run_dir.exists():
         raise FileNotFoundError(f"run directory not found: {run_dir}")
+    if not run_dir.is_dir():
+        raise NotADirectoryError(f"run path is not a directory: {run_dir}")
     metrics = _aggregate_metrics(run_dir)
     print(f"Wrote metrics.json for {args.run_id}")
-    print(f"  evaluator: {metrics.get('evaluator')}")
+    print(f"  evaluator: {metrics['evaluator']}")
 
 
 def _resolve_run_dir(args: argparse.Namespace, evaluator: Evaluator) -> tuple[str, Path]:

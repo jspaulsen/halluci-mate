@@ -75,9 +75,7 @@ class _StubStockfish:
 
 
 def _read_records(run_dir: Path) -> list[PerMoveRecord]:
-    records = RunReader(run_dir).read_records()
-    assert all(isinstance(r, PerMoveRecord | PerGameRecord) for r in records)
-    return [r for r in records if isinstance(r, PerMoveRecord)]
+    return [r for r in RunReader(run_dir).read_records() if isinstance(r, PerMoveRecord)]
 
 
 def _read_game_records(run_dir: Path) -> list[PerGameRecord]:

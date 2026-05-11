@@ -6,16 +6,20 @@ written by the evaluator are the contract.
 
 See `docs/eval_harness.md` §Metrics and §Stratification.
 
-Stratified breakdowns live alongside the overall aggregate as nested
-dicts (not separate functions), keyed by the stratifying dimension. Keys
-are pinned to the enums declared in `records.py` so the on-disk
+Within-run breakdowns (e.g. `by_phase`, `by_model_side`) live alongside
+the overall aggregate as nested dicts keyed by the stratifying dimension.
+Keys are pinned to the enums declared in `records.py` so the on-disk
 `metrics.json` schema is stable across runs and trivially diffable.
+Cross-run dimensions like `stockfish_skill` are emitted as top-level
+scalars here — comparing across them is the diff layer's job, not this
+module's.
 """
 
 from __future__ import annotations
 
 import math
 from dataclasses import asdict, dataclass
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from halluci_mate.eval.records import (
@@ -29,15 +33,9 @@ from halluci_mate.eval.records import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Callable, Iterable
 
     from halluci_mate.eval.records import Record
-
-# Keys read from the `config.json` payload written by `vs_stockfish`.
-# Centralized here so the metrics module's contract with the evaluator's
-# config dict is explicit and grep-able.
-_CONFIG_EVALUATOR_KEY = "evaluator"
-_CONFIG_STOCKFISH_SKILL_KEY = "stockfish_skill"
 
 
 @dataclass(frozen=True)
@@ -81,39 +79,43 @@ class LegalRateBucket:
     rate: float
 
 
-def compute_win_rate(records: Iterable[Record]) -> WinRateStats:
-    """Aggregate per-game outcome records into win/draw/loss tallies.
+@dataclass(frozen=True)
+class LegalRateStats:
+    """Overall + by-phase + by-model_side breakdown of legal-move rate."""
 
-    Filters to `PerGameRecord`; non-game records (per-move, etc.) are
-    ignored so callers can pass an unfiltered records stream.
-    """
-    games = [r for r in records if isinstance(r, PerGameRecord)]
+    overall: LegalRateBucket
+    by_phase: dict[str, LegalRateBucket]
+    by_model_side: dict[str, LegalRateBucket]
+
+
+def compute_win_rate(games: list[PerGameRecord]) -> WinRateStats:
+    """Aggregate per-game outcome records into win/draw/loss tallies."""
     overall = _winrate_bucket(games)
     by_side = {side.value: _winrate_bucket([g for g in games if g.model_side == side]) for side in Side}
     return WinRateStats(overall=overall, by_model_side=by_side)
 
 
-def compute_legal_rate(records: Iterable[Record]) -> float:
-    """Fraction of records whose unconstrained top-1 sample was legal.
+def compute_legal_rate(moves: list[PerMoveRecord]) -> LegalRateStats:
+    """Aggregate per-move records into legal-rate tallies, overall and stratified.
 
-    Accepts both per-move records (`PerMoveRecord.raw_sample_legal`) and
-    per-legal-rate records (`PerLegalRateRecord.legal`) so the same metric
-    works across `vs_stockfish` and `legal_rate` runs. Other record types
-    are ignored, so callers can pass an unfiltered records stream. For
-    `PerMoveRecord`s, the source bit only carries signal when `mask_used`
-    is true (otherwise raw == played and the bit is trivially true).
-    Returns 0.0 if there are no relevant records.
+    Source field is `raw_sample_legal` — when `mask_used` is false the raw
+    sample equals the played move and the bit is trivially true; the
+    metric only carries signal when `mask_used` is true (i.e. constrained
+    decoding).
     """
-    return _legal_rate_tally(records).rate
+    return LegalRateStats(
+        overall=_legal_rate_bucket(moves),
+        by_phase=_legal_rate_by(moves, lambda m: m.phase, Phase),
+        by_model_side=_legal_rate_by(moves, lambda m: m.model_side, Side),
+    )
 
 
 def _legal_rate_tally(records: Iterable[Record]) -> LegalRateBucket:
-    """Single source of truth for legal-rate counting across record types.
+    """Cross-record-type legal-rate counting for the LEGAL_RATE evaluator.
 
-    Both `PerMoveRecord` and `PerLegalRateRecord` carry a legality bit; this
-    helper consumes either (or both) and returns the bucket so callers that
-    need only the rate (`compute_legal_rate`) and callers that need the full
-    `n`/`legal`/`rate` shape (`_compute_legal_rate_aggregate`) share one pass.
+    Both `PerMoveRecord` and `PerLegalRateRecord` carry a legality bit;
+    `_compute_legal_rate_aggregate` consumes either (or both) through this
+    helper so its on-disk payload shape stays aligned with `vs_stockfish`.
     """
     n = 0
     legal = 0
@@ -135,7 +137,9 @@ def compute_all(records: Iterable[Record], config: dict[str, Any]) -> dict[str, 
     caller may pass a generator.
     """
     records_list = list(records)
-    evaluator = config.get(_CONFIG_EVALUATOR_KEY)
+    evaluator = config.get("evaluator")
+    # When a second evaluator lands, swap this if/elif for an
+    # `Evaluator -> compute fn` dispatch table.
     if evaluator == Evaluator.VS_STOCKFISH.value:
         return _compute_vs_stockfish(records_list, config)
     if evaluator == Evaluator.LEGAL_RATE.value:
@@ -175,30 +179,29 @@ def _compute_perplexity(records: list[Record]) -> dict[str, Any]:
 
 def _compute_vs_stockfish(records: list[Record], config: dict[str, Any]) -> dict[str, Any]:
     moves = [r for r in records if isinstance(r, PerMoveRecord)]
+    games = [r for r in records if isinstance(r, PerGameRecord)]
     return {
         "evaluator": Evaluator.VS_STOCKFISH.value,
-        "stockfish_skill": config.get(_CONFIG_STOCKFISH_SKILL_KEY),
-        "win_rate": asdict(compute_win_rate(records)),
-        "legal_rate": {
-            "overall": asdict(_legal_rate_tally(moves)),
-            "by_phase": {phase.value: asdict(_legal_rate_tally([m for m in moves if m.phase == phase])) for phase in Phase},
-            "by_model_side": {side.value: asdict(_legal_rate_tally([m for m in moves if m.model_side == side])) for side in Side},
-        },
+        "stockfish_skill": config.get("stockfish_skill"),
+        "win_rate": asdict(compute_win_rate(games)),
+        "legal_rate": asdict(compute_legal_rate(moves)),
     }
 
 
 def _winrate_bucket(games: list[PerGameRecord]) -> WinRateBucket:
     wins = losses = draws = unfinished = 0
     for game in games:
-        match _classify_game(game):
-            case "win":
-                wins += 1
-            case "loss":
-                losses += 1
-            case "draw":
-                draws += 1
-            case _:
+        match game.result:
+            case "*":
                 unfinished += 1
+            case "1/2-1/2":
+                draws += 1
+            case "1-0":
+                wins += 1 if game.model_side == Side.WHITE else 0
+                losses += 1 if game.model_side == Side.BLACK else 0
+            case "0-1":
+                wins += 1 if game.model_side == Side.BLACK else 0
+                losses += 1 if game.model_side == Side.WHITE else 0
     scored = len(games) - unfinished
     win_rate = wins / scored if scored else 0.0
     score_rate = (wins + 0.5 * draws) / scored if scored else 0.0
@@ -213,11 +216,15 @@ def _winrate_bucket(games: list[PerGameRecord]) -> WinRateBucket:
     )
 
 
-def _classify_game(game: PerGameRecord) -> str:
-    """Map a `PerGameRecord` to one of `win`/`loss`/`draw`/`unfinished`."""
-    if game.result == "*":
-        return "unfinished"
-    if game.result == "1/2-1/2":
-        return "draw"
-    halluci_won = (game.result == "1-0" and game.model_side == Side.WHITE) or (game.result == "0-1" and game.model_side == Side.BLACK)
-    return "win" if halluci_won else "loss"
+def _legal_rate_bucket(moves: list[PerMoveRecord]) -> LegalRateBucket:
+    legal = sum(m.raw_sample_legal for m in moves)
+    rate = legal / len(moves) if moves else 0.0
+    return LegalRateBucket(n=len(moves), legal=legal, rate=rate)
+
+
+def _legal_rate_by[E: StrEnum](
+    moves: list[PerMoveRecord],
+    key: Callable[[PerMoveRecord], E],
+    enum: type[E],
+) -> dict[str, LegalRateBucket]:
+    return {member.value: _legal_rate_bucket([m for m in moves if key(m) == member]) for member in enum}
