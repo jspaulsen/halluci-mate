@@ -70,7 +70,6 @@ class _StubEngine:
         constrained: bool | None = None,
         record_top_k: int = 5,
     ) -> MovePrediction:
-        del record_top_k
         played = next(iter(game.board.legal_moves))
         # ``legal-rate`` invokes us with ``constrained=False`` (no masking, no
         # played move); ``vs-stockfish`` leaves it ``None`` (its default,
@@ -81,7 +80,7 @@ class _StubEngine:
             model_move_uci=played.uci(),
             raw_sample_move_uci=played.uci(),
             raw_sample_legal=True,
-            model_top_k=[TopKEntry(move=played.uci(), logprob=-0.1)],
+            model_top_k=[TopKEntry(move=played.uci(), logprob=-0.1)] if record_top_k > 0 else [],
             mask_used=masked,
         )
 
