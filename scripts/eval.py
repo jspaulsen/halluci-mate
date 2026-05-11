@@ -47,6 +47,14 @@ DEFAULT_EVALS_DIR = Path("evals")
 
 HalluciColor = Literal["white", "black", "alternate"]
 
+# Shared --checkpoint / --checkpoint-tag / --evals-dir / --device options used
+# by every fresh-run subcommand (vs-stockfish, legal-rate, perplexity). Mirrors
+# the original argparse `_add_common_run_args` factoring.
+CheckpointOpt = Annotated[str, typer.Option(help="Local checkpoint directory or Hugging Face repo id.")]
+CheckpointTagOpt = Annotated[str | None, typer.Option(help="Tag used in run-id; defaults to a sanitized form of --checkpoint. User-supplied tags must not contain '_'.")]
+EvalsDirOpt = Annotated[Path, typer.Option(help=f"Parent directory for run outputs (default: {DEFAULT_EVALS_DIR}).")]
+DeviceOpt = Annotated[str | None, typer.Option(help="Torch device (default: cuda if available, else cpu).")]
+
 app = typer.Typer(
     help="halluci-mate eval harness CLI.",
     add_completion=False,
@@ -57,10 +65,10 @@ app = typer.Typer(
 
 @app.command("vs-stockfish", help="Play N games against Stockfish and emit a HAL-5 run directory.")
 def vs_stockfish_cmd(
-    checkpoint: Annotated[str, typer.Option(help="Local checkpoint directory or Hugging Face repo id.")],
-    checkpoint_tag: Annotated[str | None, typer.Option(help="Tag used in run-id; defaults to a sanitized form of --checkpoint. User-supplied tags must not contain '_'.")] = None,
-    evals_dir: Annotated[Path, typer.Option(help=f"Parent directory for run outputs (default: {DEFAULT_EVALS_DIR}).")] = DEFAULT_EVALS_DIR,
-    device: Annotated[str | None, typer.Option(help="Torch device (default: cuda if available, else cpu).")] = None,
+    checkpoint: CheckpointOpt,
+    checkpoint_tag: CheckpointTagOpt = None,
+    evals_dir: EvalsDirOpt = DEFAULT_EVALS_DIR,
+    device: DeviceOpt = None,
     stockfish: Annotated[str, typer.Option(help="Path to the stockfish binary (default: 'stockfish' on PATH).")] = "stockfish",
     games: Annotated[int, typer.Option(help="Number of games to play (default: 2).")] = 2,
     halluci_color: Annotated[HalluciColor, typer.Option(help="Which color halluci-mate plays. 'alternate' flips each game starting with white.")] = "alternate",
@@ -120,10 +128,10 @@ def vs_stockfish_cmd(
 
 @app.command("legal-rate", help="Run the model unconstrained on a set of positions and record top-1 legality.")
 def legal_rate_cmd(
-    checkpoint: Annotated[str, typer.Option(help="Local checkpoint directory or Hugging Face repo id.")],
-    checkpoint_tag: Annotated[str | None, typer.Option(help="Tag used in run-id; defaults to a sanitized form of --checkpoint. User-supplied tags must not contain '_'.")] = None,
-    evals_dir: Annotated[Path, typer.Option(help=f"Parent directory for run outputs (default: {DEFAULT_EVALS_DIR}).")] = DEFAULT_EVALS_DIR,
-    device: Annotated[str | None, typer.Option(help="Torch device (default: cuda if available, else cpu).")] = None,
+    checkpoint: CheckpointOpt,
+    checkpoint_tag: CheckpointTagOpt = None,
+    evals_dir: EvalsDirOpt = DEFAULT_EVALS_DIR,
+    device: DeviceOpt = None,
     positions: Annotated[Path | None, typer.Option(help="Path to a file with one FEN per line.")] = None,
     sample_from_games: Annotated[Path | None, typer.Option(help="Path to a PGN file; positions are reservoir-sampled across all (game, ply) pairs.")] = None,
     n: Annotated[int, typer.Option(help=f"Number of positions to sample from the PGN source (default: {DEFAULT_SAMPLE_N}). Ignored when --positions is set.")] = DEFAULT_SAMPLE_N,
@@ -167,11 +175,11 @@ def legal_rate_cmd(
 
 @app.command("perplexity", help="Score held-out game sequences and emit per-position token logprobs.")
 def perplexity_cmd(
-    checkpoint: Annotated[str, typer.Option(help="Local checkpoint directory or Hugging Face repo id.")],
+    checkpoint: CheckpointOpt,
     data: Annotated[Path, typer.Option(help="Path to a jsonl file of held-out sequences.")],
-    checkpoint_tag: Annotated[str | None, typer.Option(help="Tag used in run-id; defaults to a sanitized form of --checkpoint. User-supplied tags must not contain '_'.")] = None,
-    evals_dir: Annotated[Path, typer.Option(help=f"Parent directory for run outputs (default: {DEFAULT_EVALS_DIR}).")] = DEFAULT_EVALS_DIR,
-    device: Annotated[str | None, typer.Option(help="Torch device (default: cuda if available, else cpu).")] = None,
+    checkpoint_tag: CheckpointTagOpt = None,
+    evals_dir: EvalsDirOpt = DEFAULT_EVALS_DIR,
+    device: DeviceOpt = None,
     max_sequences: Annotated[int | None, typer.Option(help="Stop after this many sequences (default: process all).")] = None,
 ) -> None:
     config = PerplexityConfig(data_path=data, max_sequences=max_sequences)
