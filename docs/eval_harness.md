@@ -258,6 +258,9 @@ uv run python scripts/eval.py perplexity \
 
 uv run python scripts/eval.py report <run-id>
     # recomputes metrics.json from records.jsonl
+    # also doubles as recovery: if the post-run aggregation in
+    # `vs-stockfish` fails, records.jsonl + config.json are already on disk,
+    # so `report <run-id>` can recompute without replaying any games.
 
 uv run python scripts/eval.py export-dpo <run-id> \
     --output data/dpo_blunders.jsonl --threshold 200
