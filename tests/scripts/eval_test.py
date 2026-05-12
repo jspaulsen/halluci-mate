@@ -405,6 +405,54 @@ def test_perplexity_max_sequences_is_respected(tmp_path: Path, monkeypatch: pyte
     assert metrics["num_sequences"] == 2
 
 
+def test_export_dpo_legality_writes_jsonl(tmp_path: Path) -> None:
+    """`export-dpo --flavor legality` produces pairs from an existing run."""
+    evals_dir = tmp_path / "evals"
+    run_id = make_run_id("stub-ckpt", Evaluator.VS_STOCKFISH)
+    run_dir = evals_dir / run_id
+    writer = RunWriter(run_dir)
+    writer.write_config(
+        {
+            "evaluator": Evaluator.VS_STOCKFISH.value,
+            "run_id": run_id,
+            "checkpoint": DEFAULT_CHECKPOINT,
+            "analyze": False,
+        }
+    )
+    with writer:
+        writer.append_record(
+            make_per_move_record(
+                event_id=0,
+                run_id=run_id,
+                mask_used=True,
+                model_move="e2e4",
+                raw_sample_move="e2e9",
+                raw_sample_legal=False,
+            )
+        )
+
+    output = tmp_path / "dpo.jsonl"
+    eval_cli.main(["export-dpo", run_id, "--output", str(output), "--evals-dir", str(evals_dir)])
+
+    [pair] = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines() if line]
+    assert pair["chosen"] == "e2e4"
+    assert pair["rejected"] == "e2e9"
+
+
+def test_export_dpo_missing_run_dir_raises(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError, match="run directory not found"):
+        eval_cli.main(
+            [
+                "export-dpo",
+                "does-not-exist",
+                "--output",
+                str(tmp_path / "out.jsonl"),
+                "--evals-dir",
+                str(tmp_path),
+            ]
+        )
+
+
 def test_report_recovers_from_corrupt_metrics(tmp_path: Path) -> None:
     """A pre-existing malformed metrics.json must not block recomputation."""
     evals_dir = tmp_path / "evals"

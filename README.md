@@ -22,6 +22,54 @@ uv run python scripts/setup.py
 uv run python scripts/train.py
 ```
 
+## Evaluation
+
+The eval harness lives at `scripts/eval.py` with four subcommands. Each run
+writes to `evals/<run-id>/{config.json, records.jsonl, metrics.json}`.
+
+```bash
+# Play N games vs Stockfish; tag every move with CPL + blunder via --sf-analyze.
+# Required for the quality DPO flavor below.
+uv run python scripts/eval.py vs-stockfish \
+    --checkpoint runs-v1/<run>/checkpoint-<step> \
+    --games 50 --stockfish-skill 5 --stockfish-depth 12 --sf-analyze
+
+# Unconstrained top-1 legality on a position set.
+uv run python scripts/eval.py legal-rate \
+    --checkpoint <ckpt> --sample-from-games data/test.pgn --n 10000
+
+# Token-level cross-entropy on held-out sequences.
+uv run python scripts/eval.py perplexity \
+    --checkpoint <ckpt> --data data/test.jsonl
+
+# Recompute metrics.json from an existing run's records.jsonl.
+uv run python scripts/eval.py report <run-id>
+```
+
+### Exporting a DPO dataset
+
+`export-dpo` is a post-hoc transform over a `vs-stockfish` run directory; it
+does not replay games.
+
+```bash
+# Legality pairs (any vs-stockfish run): rescued mask move (chosen) vs.
+# illegal unconstrained top-1 (rejected).
+uv run python scripts/eval.py export-dpo <run-id> \
+    --output data/dpo_legality.jsonl --flavor legality
+
+# Quality pairs (requires --sf-analyze): Stockfish best (chosen) vs. the
+# model's move (rejected), filtered by centipawn_loss > threshold.
+uv run python scripts/eval.py export-dpo <run-id> \
+    --output data/dpo_quality.jsonl --flavor quality --threshold 200
+
+# Both flavors into one file, deduped by FEN (first pair wins).
+uv run python scripts/eval.py export-dpo <run-id> \
+    --output data/dpo_both.jsonl --flavor both --threshold 200 --dedup-by-fen
+```
+
+See `docs/eval_harness.md` for the full record schema, metrics, and design
+rationale.
+
 ## Development
 
 ```bash
