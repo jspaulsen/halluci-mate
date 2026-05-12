@@ -18,6 +18,7 @@ module's.
 from __future__ import annotations
 
 import math
+import statistics
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
@@ -88,11 +89,47 @@ class LegalRateStats:
     by_model_side: dict[str, LegalRateBucket]
 
 
+@dataclass(frozen=True)
+class CplBucket:
+    """Centipawn-loss summary for one stratum (n=0 ⇒ all stats 0.0)."""
+
+    n: int
+    mean: float
+    median: float
+    p95: float
+
+
+@dataclass(frozen=True)
+class CplStats:
+    """Overall + by-phase breakdown of centipawn loss."""
+
+    overall: CplBucket
+    by_phase: dict[str, CplBucket]
+
+
+@dataclass(frozen=True)
+class BlunderBucket:
+    """Blunder tally for one stratum (n=0 ⇒ rate=0.0)."""
+
+    n: int
+    blunders: int
+    rate: float
+
+
+@dataclass(frozen=True)
+class BlunderStats:
+    """Overall + by-phase breakdown of blunder rate."""
+
+    overall: BlunderBucket
+    by_phase: dict[str, BlunderBucket]
+
+
 def compute_win_rate(games: list[PerGameRecord]) -> WinRateStats:
     """Aggregate per-game outcome records into win/draw/loss tallies."""
-    overall = _winrate_bucket(games)
-    by_side = {side.value: _winrate_bucket([g for g in games if g.model_side == side]) for side in Side}
-    return WinRateStats(overall=overall, by_model_side=by_side)
+    return WinRateStats(
+        overall=_winrate_bucket(games),
+        by_model_side=_group_buckets(games, lambda g: g.model_side, Side, _winrate_bucket),
+    )
 
 
 def compute_legal_rate(moves: list[PerMoveRecord]) -> LegalRateStats:
@@ -105,9 +142,55 @@ def compute_legal_rate(moves: list[PerMoveRecord]) -> LegalRateStats:
     """
     return LegalRateStats(
         overall=_legal_rate_bucket(moves),
-        by_phase=_legal_rate_by(moves, lambda m: m.phase, Phase),
-        by_model_side=_legal_rate_by(moves, lambda m: m.model_side, Side),
+        by_phase=_group_buckets(moves, lambda m: m.phase, Phase, _legal_rate_bucket),
+        by_model_side=_group_buckets(moves, lambda m: m.model_side, Side, _legal_rate_bucket),
     )
+
+
+def compute_centipawn_loss(moves: list[PerMoveRecord]) -> CplStats:
+    """Aggregate `centipawn_loss` over records that carry it.
+
+    Records where `centipawn_loss is None` (i.e. `--sf-analyze` was off or the
+    model played an illegal move) are skipped. With no usable records the
+    overall bucket and every phase bucket collapse to zeros — matching the
+    `LegalRateStats` convention so an `--sf-analyze`-off vs. -on diff stays
+    structurally compatible.
+    """
+    return CplStats(
+        overall=_cpl_bucket(moves),
+        by_phase=_group_buckets(moves, lambda m: m.phase, Phase, _cpl_bucket),
+    )
+
+
+def compute_blunder_rate(moves: list[PerMoveRecord]) -> BlunderStats:
+    """Aggregate `is_blunder` flags over records that carry them.
+
+    Records where `is_blunder is None` are skipped — same gating as
+    `compute_centipawn_loss`.
+    """
+    return BlunderStats(
+        overall=_blunder_bucket(moves),
+        by_phase=_group_buckets(moves, lambda m: m.phase, Phase, _blunder_bucket),
+    )
+
+
+def _cpl_bucket(moves: list[PerMoveRecord]) -> CplBucket:
+    values = [m.centipawn_loss for m in moves if m.centipawn_loss is not None]
+    if not values:
+        return CplBucket(n=0, mean=0.0, median=0.0, p95=0.0)
+    mean = sum(values) / len(values)
+    median = float(statistics.median(values))
+    # `statistics.quantiles` requires at least 2 data points; on a single
+    # sample the 95th percentile is unambiguously that value.
+    p95 = float(values[0]) if len(values) < 2 else float(statistics.quantiles(values, n=100)[94])
+    return CplBucket(n=len(values), mean=mean, median=median, p95=p95)
+
+
+def _blunder_bucket(moves: list[PerMoveRecord]) -> BlunderBucket:
+    flagged = [m.is_blunder for m in moves if m.is_blunder is not None]
+    blunders = sum(flagged)
+    rate = blunders / len(flagged) if flagged else 0.0
+    return BlunderBucket(n=len(flagged), blunders=blunders, rate=rate)
 
 
 def _legal_rate_tally(records: Iterable[Record]) -> LegalRateBucket:
@@ -180,12 +263,20 @@ def _compute_perplexity(records: list[Record]) -> dict[str, Any]:
 def _compute_vs_stockfish(records: list[Record], config: dict[str, Any]) -> dict[str, Any]:
     moves = [r for r in records if isinstance(r, PerMoveRecord)]
     games = [r for r in records if isinstance(r, PerGameRecord)]
-    return {
+    result: dict[str, Any] = {
         "evaluator": Evaluator.VS_STOCKFISH.value,
         "stockfish_skill": config.get("stockfish_skill"),
         "win_rate": asdict(compute_win_rate(games)),
         "legal_rate": asdict(compute_legal_rate(moves)),
     }
+    # Only emit CPL / blunder blocks when the run actually populated them;
+    # otherwise an `--sf-analyze`-off run would emit a misleading all-zeros
+    # block and pollute schema diffs. A single populated record is enough to
+    # opt in — the metric functions themselves skip per-record `None`s.
+    if any(m.centipawn_loss is not None for m in moves):
+        result["centipawn_loss"] = asdict(compute_centipawn_loss(moves))
+        result["blunder_rate"] = asdict(compute_blunder_rate(moves))
+    return result
 
 
 def _winrate_bucket(games: list[PerGameRecord]) -> WinRateBucket:
@@ -222,9 +313,10 @@ def _legal_rate_bucket(moves: list[PerMoveRecord]) -> LegalRateBucket:
     return LegalRateBucket(n=len(moves), legal=legal, rate=rate)
 
 
-def _legal_rate_by[E: StrEnum](
-    moves: list[PerMoveRecord],
-    key: Callable[[PerMoveRecord], E],
+def _group_buckets[R, B, E: StrEnum](
+    records: list[R],
+    key: Callable[[R], E],
     enum: type[E],
-) -> dict[str, LegalRateBucket]:
-    return {member.value: _legal_rate_bucket([m for m in moves if key(m) == member]) for member in enum}
+    bucket: Callable[[list[R]], B],
+) -> dict[str, B]:
+    return {member.value: bucket([r for r in records if key(r) == member]) for member in enum}
