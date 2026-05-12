@@ -29,6 +29,7 @@ import chess.engine
 import click.exceptions
 import typer
 
+from halluci_mate.eval.dpo_export import DEFAULT_QUALITY_THRESHOLD_CP, DpoFlavor, export_dpo
 from halluci_mate.eval.evaluators.legal_rate import DEFAULT_SAMPLE_N, LegalRateConfig, run_legal_rate
 from halluci_mate.eval.evaluators.perplexity import PerplexityConfig, run_perplexity
 from halluci_mate.eval.evaluators.vs_stockfish import (
@@ -226,6 +227,37 @@ def perplexity_cmd(
     print(f"mean NLL:         {mean_nll:.4f}")
     print(f"bits/token:       {bits_per_token:.4f}")
     print(f"Artifacts:        {run_dir}")
+
+
+@app.command("export-dpo", help="Export DPO preference pairs (JSONL) from an existing vs-stockfish run.")
+def export_dpo_cmd(
+    run_id: Annotated[str, typer.Argument(help="Run id under --evals-dir; the run directory must already contain records.jsonl and config.json.")],
+    output: Annotated[Path, typer.Option(help="Path to write the JSONL preference pairs to.")],
+    evals_dir: Annotated[Path, typer.Option(help=f"Parent directory holding the run (default: {DEFAULT_EVALS_DIR}).")] = DEFAULT_EVALS_DIR,
+    flavor: Annotated[DpoFlavor, typer.Option(help="Pair flavor: legality (any run), quality (--sf-analyze run only), or both.")] = DpoFlavor.LEGALITY,
+    threshold: Annotated[
+        int, typer.Option(help=f"Centipawn-loss threshold for quality pairs (default: {DEFAULT_QUALITY_THRESHOLD_CP}). Ignored for legality.")
+    ] = DEFAULT_QUALITY_THRESHOLD_CP,
+    dedup_by_fen: Annotated[bool, typer.Option("--dedup-by-fen", help="Keep only the first pair per fen_before.")] = False,
+) -> None:
+    run_dir = evals_dir / run_id
+    if not run_dir.exists():
+        raise FileNotFoundError(f"run directory not found: {run_dir}")
+    if not run_dir.is_dir():
+        raise NotADirectoryError(f"run path is not a directory: {run_dir}")
+
+    n_pairs = export_dpo(
+        run_dir=run_dir,
+        output=output,
+        flavor=flavor,
+        threshold=threshold,
+        dedup_by_fen=dedup_by_fen,
+    )
+    print("\n=== Summary ===")
+    print(f"Run id:    {run_id}")
+    print(f"Flavor:    {flavor.value}")
+    print(f"Pairs:     {n_pairs}")
+    print(f"Output:    {output}")
 
 
 @app.command("report", help="Recompute metrics.json from an existing run directory's records.jsonl.")
