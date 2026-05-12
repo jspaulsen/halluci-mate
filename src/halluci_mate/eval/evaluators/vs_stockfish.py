@@ -3,8 +3,9 @@
 Built on the HAL-5 record/runs APIs. Caller manages the inference engine and
 Stockfish process — keeps the evaluator pure (testable with stubs).
 
-Out of scope (separate tickets): Stockfish per-position analysis
-(``--sf-analyze``) and metric aggregation.
+Opt-in per-position Stockfish analysis (``--sf-analyze``) populates the
+``sf_*`` / ``centipawn_loss`` / ``is_blunder`` fields; metric aggregation
+lives in ``halluci_mate.eval.metrics``.
 """
 
 from __future__ import annotations
@@ -33,20 +34,28 @@ STOCKFISH_SKILL_MAX = 20
 _OPENING_PLY_MAX = 20
 _MIDDLEGAME_PLY_MAX = 60
 
+# Centipawn value used to clamp mate scores when ``--sf-analyze`` is on, so
+# `sf_eval_*_cp` stays a finite int. Missed forced mates still produce very
+# large `centipawn_loss` values but the on-disk schema remains diff-friendly.
+_MATE_SCORE_CP = 100_000
+
 HalluciColor = Literal["white", "black", "alternate"]
 
 
 class _StockfishEngine(Protocol):
-    """The two methods of ``chess.engine.SimpleEngine`` that the evaluator uses.
+    """The methods of ``chess.engine.SimpleEngine`` that the evaluator uses.
 
     Lifecycle (``popen_uci`` / ``quit``) is the caller's responsibility; this
     protocol covers only the calls made *during* a run, which is also what
-    test stubs need to implement.
+    test stubs need to implement. ``analyse`` is only invoked when
+    ``VsStockfishConfig.analyze`` is true.
     """
 
     def configure(self, options: dict[str, Any]) -> None: ...
 
     def play(self, board: chess.Board, limit: chess.engine.Limit) -> chess.engine.PlayResult: ...
+
+    def analyse(self, board: chess.Board, limit: chess.engine.Limit) -> chess.engine.InfoDict: ...
 
 
 @dataclass(frozen=True)
@@ -61,6 +70,7 @@ class VsStockfishConfig:
     max_plies: int = 400
     unconstrained: bool = False
     record_top_k: int = 5
+    analyze: bool = False
     blunder_threshold_cp: int = 200
 
     def __post_init__(self) -> None:
@@ -213,6 +223,8 @@ def _play_one_game(
             _handle_model_turn(
                 state=state,
                 engine=engine,
+                stockfish=stockfish,
+                stockfish_limit=stockfish_limit,
                 config=config,
                 writer=writer,
                 run_id=run_id,
@@ -265,6 +277,8 @@ def _handle_model_turn(
     *,
     state: _GameState,
     engine: Predictor,
+    stockfish: _StockfishEngine,
+    stockfish_limit: chess.engine.Limit,
     config: VsStockfishConfig,
     writer: RunWriter,
     run_id: str,
@@ -275,12 +289,31 @@ def _handle_model_turn(
 ) -> None:
     board = state.game.board
     ply = board.ply()
+    mover_color = board.turn
+    fen_before = board.fen()
+    legal_uci_before = [move.uci() for move in board.legal_moves]
+
+    before_info = stockfish.analyse(board, stockfish_limit) if config.analyze else None
+    sf_best_move = _pv_first_move_uci(before_info) if before_info is not None else None
+    eval_before_white = _white_relative_cp(before_info) if before_info is not None else None
 
     prediction = engine.predict_with_metadata(
         state.game,
         constrained=not config.unconstrained,
         record_top_k=config.record_top_k,
     )
+
+    eval_after_white: int | None = None
+    centipawn_loss: int | None = None
+    is_blunder: bool | None = None
+    if eval_before_white is not None and prediction.played_move is not None:
+        # Analyse the resulting position on a board copy so move application
+        # stays at the bottom of the function alongside the non-analyze path.
+        after_board = board.copy(stack=False)
+        after_board.push(prediction.played_move)
+        eval_after_white = _white_relative_cp(stockfish.analyse(after_board, stockfish_limit))
+        centipawn_loss = _centipawn_loss_stm(eval_before_white, eval_after_white, mover_color)
+        is_blunder = centipawn_loss > config.blunder_threshold_cp
 
     record = PerMoveRecord(
         run_id=run_id,
@@ -290,21 +323,21 @@ def _handle_model_turn(
         game_id=game_id,
         ply=ply,
         phase=_phase_for_ply(ply),
-        side_to_move=_side_for_color(board.turn),
+        side_to_move=_side_for_color(mover_color),
         model_side=model_side,
-        fen_before=board.fen(),
-        legal_moves=[move.uci() for move in board.legal_moves],
+        fen_before=fen_before,
+        legal_moves=legal_uci_before,
         model_move=prediction.model_move_uci,
         model_top_k=list(prediction.model_top_k),
         mask_used=prediction.mask_used,
         raw_sample_move=prediction.raw_sample_move_uci,
         raw_sample_legal=prediction.raw_sample_legal,
         prior_opponent_move=state.prior_opponent_move,
-        sf_best_move=None,
-        sf_eval_before_cp=None,
-        sf_eval_after_cp=None,
-        centipawn_loss=None,
-        is_blunder=None,
+        sf_best_move=sf_best_move,
+        sf_eval_before_cp=eval_before_white,
+        sf_eval_after_cp=eval_after_white,
+        centipawn_loss=centipawn_loss,
+        is_blunder=is_blunder,
     )
     writer.append_record(record)
 
@@ -346,3 +379,36 @@ def _phase_for_ply(ply: int) -> Phase:
 
 def _side_for_color(color: chess.Color) -> Side:
     return Side.WHITE if color == chess.WHITE else Side.BLACK
+
+
+def _white_relative_cp(info: chess.engine.InfoDict) -> int:
+    """Return the white-relative centipawn evaluation, with mates clamped.
+
+    Mate scores serialize as `int | None` in the record schema, so they have
+    to collapse to a finite int here. See `_MATE_SCORE_CP`.
+    """
+    score = info["score"].white().score(mate_score=_MATE_SCORE_CP)
+    # `score(mate_score=...)` only returns `None` for `MateGiven`, which
+    # Stockfish never emits on a non-terminal position. Be defensive.
+    assert score is not None
+    return score
+
+
+def _pv_first_move_uci(info: chess.engine.InfoDict) -> str | None:
+    """Return the first move of the principal variation as UCI, or `None` if absent."""
+    pv = info.get("pv")
+    if not pv:
+        return None
+    return pv[0].uci()
+
+
+def _centipawn_loss_stm(eval_before_white: int, eval_after_white: int, mover_color: chess.Color) -> int:
+    """Compute side-to-move-relative centipawn loss.
+
+    `sf_eval_*_cp` are stored white-relative on disk; CPL is computed from
+    the mover's perspective per `docs/eval_harness.md` §Per-move record.
+    """
+    sign = 1 if mover_color == chess.WHITE else -1
+    before_stm = sign * eval_before_white
+    after_stm = sign * eval_after_white
+    return max(0, before_stm - after_stm)

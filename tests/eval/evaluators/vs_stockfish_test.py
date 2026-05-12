@@ -73,6 +73,39 @@ class _StubStockfish:
         move = list(board.legal_moves)[-1]
         return chess.engine.PlayResult(move=move, ponder=None)
 
+    def analyse(self, board: chess.Board, limit: chess.engine.Limit) -> chess.engine.InfoDict:
+        del limit
+        # Fixed `Cp(0)` keeps unrelated tests insulated from CPL behavior;
+        # `--sf-analyze`-on tests use `_AnalyzingStubStockfish` instead.
+        first_move = next(iter(board.legal_moves), None)
+        info: chess.engine.InfoDict = {"score": chess.engine.PovScore(chess.engine.Cp(0), chess.WHITE)}
+        if first_move is not None:
+            info["pv"] = [first_move]
+        return info
+
+
+class _AnalyzingStubStockfish(_StubStockfish):
+    """`_StubStockfish` whose `analyse` returns scripted scores per call.
+
+    Each call pops the next `(score, pv_first_move_uci)` pair from `scores`;
+    the test sets these up so before/after evals produce a known CPL.
+    Records every `analyse` call so tests can assert the analyze loop fired.
+    """
+
+    def __init__(self, scores: list[tuple[chess.engine.Score, str | None]]) -> None:
+        super().__init__()
+        self._scores = list(scores)
+        self.analyse_calls: list[str] = []
+
+    def analyse(self, board: chess.Board, limit: chess.engine.Limit) -> chess.engine.InfoDict:
+        del limit
+        self.analyse_calls.append(board.fen())
+        score, pv_uci = self._scores.pop(0)
+        info: chess.engine.InfoDict = {"score": chess.engine.PovScore(score, chess.WHITE)}
+        if pv_uci is not None:
+            info["pv"] = [chess.Move.from_uci(pv_uci)]
+        return info
+
 
 def _read_records(run_dir: Path) -> list[PerMoveRecord]:
     return [r for r in RunReader(run_dir).read_records() if isinstance(r, PerMoveRecord)]
@@ -316,6 +349,166 @@ def test_depth_used_when_no_movetime() -> None:
     limit = config.stockfish_limit()
     assert limit.depth == 4
     assert limit.time is None
+
+
+def test_analyze_off_leaves_sf_fields_null(tmp_path: Path) -> None:
+    """Default (analyze=False) keeps every sf-related field on every record `None`."""
+    run_dir = tmp_path / "run"
+    config = VsStockfishConfig(games=1, max_plies=2, halluci_color="white")
+    stockfish = _AnalyzingStubStockfish(scores=[])
+
+    run_vs_stockfish(
+        engine=_StubEngine(),
+        stockfish=stockfish,
+        config=config,
+        run_dir=run_dir,
+        run_id=DEFAULT_RUN_ID,
+        checkpoint=DEFAULT_CHECKPOINT,
+    )
+
+    records = _read_records(run_dir)
+    assert records, "expected at least one model-decision record"
+    for r in records:
+        assert r.sf_best_move is None
+        assert r.sf_eval_before_cp is None
+        assert r.sf_eval_after_cp is None
+        assert r.centipawn_loss is None
+        assert r.is_blunder is None
+    assert stockfish.analyse_calls == []
+
+
+def test_analyze_on_populates_sf_fields_white_pov(tmp_path: Path) -> None:
+    """Model as White: `centipawn_loss = max(0, eval_before_white - eval_after_white)`."""
+    run_dir = tmp_path / "run"
+    config = VsStockfishConfig(games=1, max_plies=2, halluci_color="white", analyze=True, blunder_threshold_cp=200)
+    stockfish = _AnalyzingStubStockfish(
+        scores=[
+            # Before: white +50 cp, PV = a2a4. After: white -30 cp.
+            (chess.engine.Cp(50), "a2a4"),
+            (chess.engine.Cp(-30), None),
+        ],
+    )
+
+    run_vs_stockfish(
+        engine=_StubEngine(),
+        stockfish=stockfish,
+        config=config,
+        run_dir=run_dir,
+        run_id=DEFAULT_RUN_ID,
+        checkpoint=DEFAULT_CHECKPOINT,
+    )
+
+    records = _read_records(run_dir)
+    assert len(records) == 1
+    rec = records[0]
+    assert rec.sf_best_move == "a2a4"
+    assert rec.sf_eval_before_cp == 50
+    assert rec.sf_eval_after_cp == -30
+    # Model is White: CPL = max(0, 50 - (-30)) = 80.
+    assert rec.centipawn_loss == 80
+    assert rec.is_blunder is False
+    # Two analyse calls per model decision: before + after.
+    assert len(stockfish.analyse_calls) == 2
+
+
+def test_analyze_on_uses_side_to_move_relative_cpl_for_black(tmp_path: Path) -> None:
+    """Model as Black: white-relative swing of +N counts as +N CPL for Black."""
+    run_dir = tmp_path / "run"
+    config = VsStockfishConfig(games=1, max_plies=3, halluci_color="black", analyze=True, blunder_threshold_cp=100)
+    stockfish = _AnalyzingStubStockfish(
+        scores=[
+            # Before: white +100 cp (black-pov -100). After: white +250 (black-pov -250).
+            (chess.engine.Cp(100), "e7e5"),
+            (chess.engine.Cp(250), None),
+        ],
+    )
+
+    run_vs_stockfish(
+        engine=_StubEngine(),
+        stockfish=stockfish,
+        config=config,
+        run_dir=run_dir,
+        run_id=DEFAULT_RUN_ID,
+        checkpoint=DEFAULT_CHECKPOINT,
+    )
+
+    records = _read_records(run_dir)
+    assert len(records) == 1
+    rec = records[0]
+    assert rec.sf_eval_before_cp == 100
+    assert rec.sf_eval_after_cp == 250
+    # Model is Black: CPL = max(0, -100 - (-250)) = 150 > threshold 100.
+    assert rec.centipawn_loss == 150
+    assert rec.is_blunder is True
+
+
+def test_analyze_clamps_mate_scores(tmp_path: Path) -> None:
+    """Mate scores collapse to ~±100_000 cp so the on-disk field stays a finite int."""
+    run_dir = tmp_path / "run"
+    config = VsStockfishConfig(games=1, max_plies=2, halluci_color="white", analyze=True)
+    stockfish = _AnalyzingStubStockfish(
+        scores=[
+            (chess.engine.Mate(2), "a2a4"),
+            (chess.engine.Mate(-2), None),
+        ],
+    )
+
+    run_vs_stockfish(
+        engine=_StubEngine(),
+        stockfish=stockfish,
+        config=config,
+        run_dir=run_dir,
+        run_id=DEFAULT_RUN_ID,
+        checkpoint=DEFAULT_CHECKPOINT,
+    )
+
+    records = _read_records(run_dir)
+    assert len(records) == 1
+    rec = records[0]
+    assert rec.sf_eval_before_cp is not None and rec.sf_eval_before_cp > 90_000
+    assert rec.sf_eval_after_cp is not None and rec.sf_eval_after_cp < -90_000
+    # Missed forced mate -> CPL >= ~180_000, far above any reasonable threshold.
+    assert rec.is_blunder is True
+
+
+def test_analyze_on_illegal_move_only_fills_before_fields(tmp_path: Path) -> None:
+    """When the model returns no played move, the post-move analyse is skipped."""
+    run_dir = tmp_path / "run"
+    config = VsStockfishConfig(games=1, max_plies=4, halluci_color="white", unconstrained=True, analyze=True)
+
+    class _IllegalEngine:
+        def predict_with_metadata(self, game: Game, *, constrained: bool | None = None, record_top_k: int = 5) -> MovePrediction:
+            del game, constrained, record_top_k
+            return MovePrediction(
+                played_move=None,
+                model_move_uci="<UNK>",
+                raw_sample_move_uci="<UNK>",
+                raw_sample_legal=False,
+                model_top_k=[],
+                mask_used=False,
+            )
+
+    stockfish = _AnalyzingStubStockfish(scores=[(chess.engine.Cp(25), "e2e4")])
+
+    run_vs_stockfish(
+        engine=_IllegalEngine(),
+        stockfish=stockfish,
+        config=config,
+        run_dir=run_dir,
+        run_id=DEFAULT_RUN_ID,
+        checkpoint=DEFAULT_CHECKPOINT,
+    )
+
+    records = _read_records(run_dir)
+    assert len(records) == 1
+    rec = records[0]
+    assert rec.sf_best_move == "e2e4"
+    assert rec.sf_eval_before_cp == 25
+    assert rec.sf_eval_after_cp is None
+    assert rec.centipawn_loss is None
+    assert rec.is_blunder is None
+    # No second analyse call: the model never produced a legal move to apply.
+    assert len(stockfish.analyse_calls) == 1
 
 
 def test_outcome_dataclass_shape() -> None:
