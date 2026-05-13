@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict
 
+from halluci_mate.eval.metrics import LOST_POSITION_THRESHOLD_CP, drop_repetition_moves, is_consequential
 from halluci_mate.eval.records import PerMoveRecord
 from halluci_mate.eval.runs import RunReader
 
@@ -86,20 +87,46 @@ def build_legality_pairs(records: Iterable[PerMoveRecord]) -> Iterator[DpoPair]:
             yield DpoPair(prompt=record.fen_before, chosen=record.model_move, rejected=record.raw_sample_move)
 
 
-def build_quality_pairs(records: Iterable[PerMoveRecord], threshold: int) -> Iterator[DpoPair]:
+def build_quality_pairs(
+    records: Iterable[PerMoveRecord],
+    threshold: int,
+    *,
+    require_consequential: bool = False,
+    exclude_repetition: bool = False,
+    lost_position_threshold_cp: int = LOST_POSITION_THRESHOLD_CP,
+) -> Iterator[DpoPair]:
     """Yield one pair per record where the model lost more than ``threshold`` centipawns.
 
     Skips records where Stockfish's best move equals the model's move: a
     nonzero CPL on an identical move means the post-move analysis diverged
     from the pre-move PV (search noise), and a pair that prefers a move
     over itself would be a no-op for DPO.
+
+    ``require_consequential`` keeps only moves played from a not-yet-lost
+    position (model-perspective eval-before >= ``-lost_position_threshold_cp``).
+    Blunders in already-lost endgames teach the model to chase Stockfish's
+    swindle-line, which usually does not generalize — see
+    ``BlunderPositionContextStats`` for the rationale.
+
+    ``exclude_repetition`` drops moves whose threefold-repetition key
+    recurs within the same game. King-shuffle / forced-draw sequences are
+    flagged as blunders by Stockfish even when repetition is precisely
+    what saves the half-point; pairing against the "correct" non-repeating
+    move teaches the model to abandon the only drawing line.
+
+    ``exclude_repetition`` must materialize the input so the per-game
+    counts can be tallied before iteration.
     """
+    if exclude_repetition:
+        records = drop_repetition_moves(list(records))
     for record in records:
         if record.sf_best_move is None or record.centipawn_loss is None:
             continue
         if record.centipawn_loss <= threshold:
             continue
         if record.sf_best_move == record.model_move:
+            continue
+        if require_consequential and not is_consequential(record, lost_position_threshold_cp):
             continue
         yield DpoPair(prompt=record.fen_before, chosen=record.sf_best_move, rejected=record.model_move)
 
@@ -111,6 +138,8 @@ def export_dpo(
     flavor: DpoFlavor,
     threshold: int = DEFAULT_QUALITY_THRESHOLD_CP,
     dedup_by_fen: bool = False,
+    require_consequential: bool = False,
+    exclude_repetition: bool = False,
 ) -> int:
     """Read ``run_dir``'s records, build pairs, write JSONL to ``output``.
 
@@ -119,6 +148,10 @@ def export_dpo(
     ``--sf-analyze`` — without CPL data the quality filter can only match
     zero records, and silently emitting an empty file would hide the
     misuse.
+
+    ``require_consequential`` and ``exclude_repetition`` are quality-only
+    filters; legality pairs (which select on legality of a raw sample, not
+    move quality) ignore them. See ``build_quality_pairs`` for semantics.
     """
     reader = RunReader(run_dir)
     config = reader.read_config()
@@ -134,7 +167,14 @@ def export_dpo(
     if flavor in (DpoFlavor.LEGALITY, DpoFlavor.BOTH):
         pairs.extend(build_legality_pairs(per_move_records))
     if flavor in (DpoFlavor.QUALITY, DpoFlavor.BOTH):
-        pairs.extend(build_quality_pairs(per_move_records, threshold))
+        pairs.extend(
+            build_quality_pairs(
+                per_move_records,
+                threshold,
+                require_consequential=require_consequential,
+                exclude_repetition=exclude_repetition,
+            )
+        )
 
     if dedup_by_fen:
         pairs = _dedup_by_fen(pairs)

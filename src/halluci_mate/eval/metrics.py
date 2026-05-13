@@ -211,7 +211,7 @@ def compute_blunder_rate(moves: list[PerMoveRecord]) -> BlunderStats:
     `BlunderPositionContextStats` for the rationale behind the two
     additional breakdowns.
     """
-    non_repetition = _drop_repetition_moves(moves)
+    non_repetition = drop_repetition_moves(moves)
     consequential, in_lost = _partition_by_position_context(moves)
     return BlunderStats(
         overall=_blunder_bucket(moves),
@@ -246,7 +246,7 @@ def _blunder_bucket(moves: list[PerMoveRecord]) -> BlunderBucket:
     return BlunderBucket(n=len(flagged), blunders=blunders, rate=rate)
 
 
-def _position_key(fen: str) -> str:
+def position_key(fen: str) -> str:
     """Return the threefold-repetition key for a FEN.
 
     The chess threefold-repetition rule compares positions on
@@ -258,7 +258,7 @@ def _position_key(fen: str) -> str:
     return " ".join(fen.split()[:4])
 
 
-def _drop_repetition_moves(moves: list[PerMoveRecord]) -> list[PerMoveRecord]:
+def drop_repetition_moves(moves: list[PerMoveRecord]) -> list[PerMoveRecord]:
     """Drop moves whose position-key recurs within the same game.
 
     A position seen more than once in the same `game_id` is treated as
@@ -268,8 +268,22 @@ def _drop_repetition_moves(moves: list[PerMoveRecord]) -> list[PerMoveRecord]:
     """
     counts: dict[tuple[str, str], int] = {}
     for move in moves:
-        counts[(move.game_id, _position_key(move.fen_before))] = counts.get((move.game_id, _position_key(move.fen_before)), 0) + 1
-    return [m for m in moves if counts[(m.game_id, _position_key(m.fen_before))] == 1]
+        counts[(move.game_id, position_key(move.fen_before))] = counts.get((move.game_id, position_key(move.fen_before)), 0) + 1
+    return [m for m in moves if counts[(m.game_id, position_key(m.fen_before))] == 1]
+
+
+def is_consequential(move: PerMoveRecord, threshold_cp: int = LOST_POSITION_THRESHOLD_CP) -> bool:
+    """True iff this move was made from a not-yet-lost position (model perspective).
+
+    A move is consequential when the model-perspective eval *before*
+    playing was `>= -threshold_cp`. Moves missing `sf_eval_before_cp`
+    return False — without analysis we can't make the call, and the
+    safer default for downstream filters (e.g. DPO export) is to drop.
+    """
+    if move.sf_eval_before_cp is None:
+        return False
+    sign = 1 if move.model_side == Side.WHITE else -1
+    return sign * move.sf_eval_before_cp >= -threshold_cp
 
 
 def _partition_by_position_context(moves: list[PerMoveRecord]) -> tuple[list[PerMoveRecord], list[PerMoveRecord]]:
@@ -286,9 +300,7 @@ def _partition_by_position_context(moves: list[PerMoveRecord]) -> tuple[list[Per
     for move in moves:
         if move.sf_eval_before_cp is None:
             continue
-        sign = 1 if move.model_side == Side.WHITE else -1
-        model_eval_before = sign * move.sf_eval_before_cp
-        if model_eval_before >= -LOST_POSITION_THRESHOLD_CP:
+        if is_consequential(move):
             consequential.append(move)
         else:
             in_lost.append(move)
