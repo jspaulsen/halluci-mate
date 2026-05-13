@@ -16,12 +16,14 @@ from halluci_mate.eval.metrics import (
     BlunderBucket,
     CplBucket,
     LegalRateBucket,
+    TacticalOversightBucket,
     WinRateBucket,
     WinRateStats,
     compute_all,
     compute_blunder_rate,
     compute_centipawn_loss,
     compute_legal_rate,
+    compute_tactical_oversight_rate,
     compute_win_rate,
 )
 from halluci_mate.eval.records import Evaluator, PerGameRecord, PerMoveRecord, Phase, Record, Side
@@ -383,6 +385,91 @@ def test_compute_blunder_rate_position_context_for_black_model() -> None:
     stats = compute_blunder_rate(moves)
     assert stats.by_position_context.in_lost_position == BlunderBucket(n=1, blunders=1, rate=1.0)
     assert stats.by_position_context.consequential == BlunderBucket(n=1, blunders=0, rate=0.0)
+
+
+# Hand-built FENs for tactical-oversight tests. Each pins one
+# attacker-vs-defender configuration so the assertion is unambiguous.
+
+# White Qd2 to play. Qd4 lands on a square the black queen attacks
+# with zero own defenders → 1 attacker, 0 defenders → oversight.
+_FEN_QUEEN_HANGS = "4k3/8/8/3q4/8/8/3Q4/4K3 w - - 0 1"
+# White Rd5 to play. Rxd6 captures a rook defended by the rook on d7.
+# Own rook on d4 defends d6 → 1 attacker, 1 defender → NOT an oversight
+# (rate would over-report otherwise).
+_FEN_BALANCED_TRADE = "4k3/3r4/3r4/3R4/3R4/8/8/4K3 w - - 0 1"
+
+
+def test_is_tactical_oversight_flags_hanging_move() -> None:
+    from halluci_mate.eval.metrics import is_tactical_oversight
+
+    flagged = is_tactical_oversight(_move(0, fen_before=_FEN_QUEEN_HANGS, model_move="d2d4"))
+    not_flagged = is_tactical_oversight(_move(1, fen_before=_FEN_BALANCED_TRADE, model_move="d5d6"))
+    assert flagged is True
+    assert not_flagged is False
+
+
+def test_is_tactical_oversight_returns_none_for_illegal_or_unparseable() -> None:
+    from halluci_mate.eval.metrics import is_tactical_oversight
+
+    # Illegal UCI from start position: e2e9 is not even a square.
+    assert is_tactical_oversight(_move(0, model_move="e2e9")) is None
+
+
+def test_compute_tactical_oversight_rate_overall_and_by_phase() -> None:
+    moves = [
+        _move(0, phase=Phase.MIDDLE, fen_before=_FEN_QUEEN_HANGS, model_move="d2d4"),
+        _move(1, phase=Phase.MIDDLE, fen_before=_FEN_BALANCED_TRADE, model_move="d5d6"),
+        _move(2, phase=Phase.OPENING),  # default move e2e4 from start — not an oversight
+    ]
+    stats = compute_tactical_oversight_rate(moves)
+    assert stats.overall.n == 3
+    assert stats.overall.oversights == 1
+    assert stats.overall.rate == pytest.approx(1 / 3)
+    assert stats.by_phase["middle"] == TacticalOversightBucket(n=2, oversights=1, rate=0.5)
+    assert stats.by_phase["opening"] == TacticalOversightBucket(n=1, oversights=0, rate=0.0)
+
+
+def test_compute_tactical_oversight_rate_skips_illegal() -> None:
+    """Illegal moves never enter numerator or denominator."""
+    moves = [
+        _move(0, fen_before=_FEN_QUEEN_HANGS, model_move="d2d4"),  # oversight
+        _move(1, model_move="e2e9"),  # illegal — skipped
+    ]
+    stats = compute_tactical_oversight_rate(moves)
+    assert stats.overall == TacticalOversightBucket(n=1, oversights=1, rate=1.0)
+
+
+def test_compute_tactical_oversight_rate_position_context_split() -> None:
+    """`by_position_context` mirrors the blunder split: consequential vs
+    in-lost-position by model-perspective eval-before."""
+    moves = [
+        _move(0, fen_before=_FEN_QUEEN_HANGS, model_move="d2d4", sf_eval_before_cp=0),
+        _move(1, fen_before=_FEN_BALANCED_TRADE, model_move="d5d6", sf_eval_before_cp=-1000),
+    ]
+    stats = compute_tactical_oversight_rate(moves)
+    assert stats.by_position_context.consequential == TacticalOversightBucket(n=1, oversights=1, rate=1.0)
+    assert stats.by_position_context.in_lost_position == TacticalOversightBucket(n=1, oversights=0, rate=0.0)
+
+
+def test_compute_tactical_oversight_rate_empty_returns_zero_buckets() -> None:
+    stats = compute_tactical_oversight_rate([])
+    zero = TacticalOversightBucket(n=0, oversights=0, rate=0.0)
+    assert stats.overall == zero
+    assert stats.by_phase == {phase.value: zero for phase in Phase}
+    assert stats.by_position_context.consequential == zero
+    assert stats.by_position_context.in_lost_position == zero
+
+
+def test_compute_all_vs_stockfish_emits_tactical_oversight_rate() -> None:
+    """`tactical_oversight_rate` is emitted on every vs_stockfish run, even
+    without `--sf-analyze` (the metric is pure board mechanics)."""
+    records: list[Record] = [
+        _move(0, fen_before=_FEN_QUEEN_HANGS, model_move="d2d4"),
+        _game(1, result="1-0"),
+    ]
+    metrics = compute_all(records, DEFAULT_CONFIG)
+    assert "tactical_oversight_rate" in metrics
+    assert metrics["tactical_oversight_rate"]["overall"] == {"n": 1, "oversights": 1, "rate": 1.0}
 
 
 def test_compute_all_vs_stockfish_emits_blunder_breakdowns() -> None:

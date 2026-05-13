@@ -23,6 +23,8 @@ from dataclasses import asdict, dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
+import chess
+
 from halluci_mate.eval.records import (
     Evaluator,
     PerGameRecord,
@@ -157,6 +159,55 @@ class BlunderStats:
     by_position_context: BlunderPositionContextStats
 
 
+@dataclass(frozen=True)
+class TacticalOversightBucket:
+    """Tactical-oversight tally for one stratum (n=0 ⇒ rate=0.0).
+
+    `n` counts moves where the metric could be computed (legal move,
+    parseable `fen_before`); records that fail those preconditions are
+    skipped from both numerator and denominator.
+    """
+
+    n: int
+    oversights: int
+    rate: float
+
+
+@dataclass(frozen=True)
+class TacticalOversightPositionContextStats:
+    """Tactical oversights split by pre-move eval context (model perspective).
+
+    Same `consequential` / `in_lost_position` partition as
+    `BlunderPositionContextStats` — see its docstring. Records missing
+    `sf_eval_before_cp` are skipped from both buckets.
+    """
+
+    consequential: TacticalOversightBucket
+    in_lost_position: TacticalOversightBucket
+
+
+@dataclass(frozen=True)
+class TacticalOversightStats:
+    """A board-mechanical proxy for piece-safety oversight.
+
+    A move is a "tactical oversight" iff the moved piece ends up on a
+    square where opponent attackers outnumber own defenders (i.e., the
+    piece is hanging or net-attacked). This is a heuristic, not a
+    capture-value calculation — a knight-takes-rook trade where the
+    knight is then recaptured by a pawn will count as an oversight even
+    though the model came out ahead on material. It is intended as a
+    coarse DPO-progress signal complementing `blunder_rate`, not as a
+    replacement for it.
+
+    Records skipped (illegal move, missing `fen_before`) are dropped from
+    both numerator and denominator.
+    """
+
+    overall: TacticalOversightBucket
+    by_phase: dict[str, TacticalOversightBucket]
+    by_position_context: TacticalOversightPositionContextStats
+
+
 # Model-perspective eval-before threshold (centipawns) for the
 # "already lost" classification. A blunder from a position worse than
 # this counts as `in_lost_position`; anything else is `consequential`.
@@ -225,6 +276,53 @@ def compute_blunder_rate(moves: list[PerMoveRecord]) -> BlunderStats:
             in_lost_position=_blunder_bucket(in_lost),
         ),
     )
+
+
+def compute_tactical_oversight_rate(moves: list[PerMoveRecord]) -> TacticalOversightStats:
+    """Aggregate the post-move piece-hanging heuristic; see `TacticalOversightStats`.
+
+    Pure board mechanics — does not require `--sf-analyze`. The
+    `by_position_context` split does (it needs `sf_eval_before_cp`) and
+    collapses to zero buckets without it.
+    """
+    consequential, in_lost = _partition_by_position_context(moves)
+    return TacticalOversightStats(
+        overall=_tactical_oversight_bucket(moves),
+        by_phase=_group_buckets(moves, lambda m: m.phase, Phase, _tactical_oversight_bucket),
+        by_position_context=TacticalOversightPositionContextStats(
+            consequential=_tactical_oversight_bucket(consequential),
+            in_lost_position=_tactical_oversight_bucket(in_lost),
+        ),
+    )
+
+
+def is_tactical_oversight(move: PerMoveRecord) -> bool | None:
+    """True iff playing ``move.model_move`` leaves the moved piece net-attacked.
+
+    Returns ``None`` when the metric cannot be computed: ``model_move``
+    is not a legal move from ``fen_before`` (so we cannot push it) or
+    the FEN does not parse. Callers use ``None`` to skip the record from
+    both numerator and denominator.
+    """
+    try:
+        board = chess.Board(move.fen_before)
+        played = chess.Move.from_uci(move.model_move)
+    except (ValueError, IndexError):
+        return None
+    if played not in board.legal_moves:
+        return None
+    mover_color = board.turn
+    board.push(played)
+    attackers = board.attackers(not mover_color, played.to_square)
+    defenders = board.attackers(mover_color, played.to_square)
+    return len(attackers) > len(defenders)
+
+
+def _tactical_oversight_bucket(moves: list[PerMoveRecord]) -> TacticalOversightBucket:
+    flags = [flag for flag in (is_tactical_oversight(m) for m in moves) if flag is not None]
+    oversights = sum(flags)
+    rate = oversights / len(flags) if flags else 0.0
+    return TacticalOversightBucket(n=len(flags), oversights=oversights, rate=rate)
 
 
 def _cpl_bucket(moves: list[PerMoveRecord]) -> CplBucket:
@@ -382,6 +480,8 @@ def _compute_vs_stockfish(records: list[Record], config: dict[str, Any]) -> dict
         "stockfish_skill": config.get("stockfish_skill"),
         "win_rate": asdict(compute_win_rate(games)),
         "legal_rate": asdict(compute_legal_rate(moves)),
+        # Pure board-mechanical metric — no SF analysis required.
+        "tactical_oversight_rate": asdict(compute_tactical_oversight_rate(moves)),
     }
     # Only emit CPL / blunder blocks when the run actually populated them;
     # otherwise an `--sf-analyze`-off run would emit a misleading all-zeros
