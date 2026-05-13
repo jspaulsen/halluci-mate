@@ -117,11 +117,52 @@ class BlunderBucket:
 
 
 @dataclass(frozen=True)
-class BlunderStats:
-    """Overall + by-phase breakdown of blunder rate."""
+class BlunderExcludingRepetitionStats:
+    """Blunder rate after dropping moves stuck in a repeating position.
+
+    Positions whose first four FEN fields (pieces / side-to-move /
+    castling / en-passant — the threefold-repetition key) recur within a
+    single game are filtered out before counting. The original blunder
+    metric over-counts king-shuffle / forced-draw sequences where
+    Stockfish's "best move" is "stop repeating, you'll lose," even when
+    repetition is what saves the half-point.
+    """
 
     overall: BlunderBucket
     by_phase: dict[str, BlunderBucket]
+
+
+@dataclass(frozen=True)
+class BlunderPositionContextStats:
+    """Blunders split by the model-perspective eval *before* the move.
+
+    `consequential` is blunders made when the model still had something
+    to lose: model-relative eval before the move >=
+    `-LOST_POSITION_THRESHOLD_CP`. `in_lost_position` is blunders made
+    when the model was already that-far-down — they hardly change the
+    outcome and dilute the headline blunder rate.
+    """
+
+    consequential: BlunderBucket
+    in_lost_position: BlunderBucket
+
+
+@dataclass(frozen=True)
+class BlunderStats:
+    """Overall + by-phase breakdown of blunder rate, plus context splits."""
+
+    overall: BlunderBucket
+    by_phase: dict[str, BlunderBucket]
+    excluding_repetition: BlunderExcludingRepetitionStats
+    by_position_context: BlunderPositionContextStats
+
+
+# Model-perspective eval-before threshold (centipawns) for the
+# "already lost" classification. A blunder from a position worse than
+# this counts as `in_lost_position`; anything else is `consequential`.
+# 300 cp ≈ a clean piece down — a position Stockfish at full strength
+# converts from reliably, so further mistakes there are mostly noise.
+LOST_POSITION_THRESHOLD_CP = 300
 
 
 def compute_win_rate(games: list[PerGameRecord]) -> WinRateStats:
@@ -166,11 +207,23 @@ def compute_blunder_rate(moves: list[PerMoveRecord]) -> BlunderStats:
     """Aggregate `is_blunder` flags over records that carry them.
 
     Records where `is_blunder is None` are skipped — same gating as
-    `compute_centipawn_loss`.
+    `compute_centipawn_loss`. See `BlunderExcludingRepetitionStats` and
+    `BlunderPositionContextStats` for the rationale behind the two
+    additional breakdowns.
     """
+    non_repetition = _drop_repetition_moves(moves)
+    consequential, in_lost = _partition_by_position_context(moves)
     return BlunderStats(
         overall=_blunder_bucket(moves),
         by_phase=_group_buckets(moves, lambda m: m.phase, Phase, _blunder_bucket),
+        excluding_repetition=BlunderExcludingRepetitionStats(
+            overall=_blunder_bucket(non_repetition),
+            by_phase=_group_buckets(non_repetition, lambda m: m.phase, Phase, _blunder_bucket),
+        ),
+        by_position_context=BlunderPositionContextStats(
+            consequential=_blunder_bucket(consequential),
+            in_lost_position=_blunder_bucket(in_lost),
+        ),
     )
 
 
@@ -191,6 +244,55 @@ def _blunder_bucket(moves: list[PerMoveRecord]) -> BlunderBucket:
     blunders = sum(flagged)
     rate = blunders / len(flagged) if flagged else 0.0
     return BlunderBucket(n=len(flagged), blunders=blunders, rate=rate)
+
+
+def _position_key(fen: str) -> str:
+    """Return the threefold-repetition key for a FEN.
+
+    The chess threefold-repetition rule compares positions on
+    pieces / side-to-move / castling rights / en-passant target — the
+    first four space-separated FEN fields. Half-move and full-move
+    counters (fields 5-6) advance every move and would defeat the
+    comparison.
+    """
+    return " ".join(fen.split()[:4])
+
+
+def _drop_repetition_moves(moves: list[PerMoveRecord]) -> list[PerMoveRecord]:
+    """Drop moves whose position-key recurs within the same game.
+
+    A position seen more than once in the same `game_id` is treated as
+    part of a repetition sequence; every visit (not just the second and
+    later) is filtered. Inter-game collisions are ignored — repetition
+    is a within-game concept.
+    """
+    counts: dict[tuple[str, str], int] = {}
+    for move in moves:
+        counts[(move.game_id, _position_key(move.fen_before))] = counts.get((move.game_id, _position_key(move.fen_before)), 0) + 1
+    return [m for m in moves if counts[(m.game_id, _position_key(m.fen_before))] == 1]
+
+
+def _partition_by_position_context(moves: list[PerMoveRecord]) -> tuple[list[PerMoveRecord], list[PerMoveRecord]]:
+    """Split moves by model-perspective eval-before relative to the lost-position threshold.
+
+    Returns `(consequential, in_lost_position)`. Moves missing
+    `sf_eval_before_cp` (e.g. `--sf-analyze` off, illegal model move) are
+    dropped from both buckets so they cannot inflate either rate; the
+    `overall` bucket on `BlunderStats` is what carries the full
+    population.
+    """
+    consequential: list[PerMoveRecord] = []
+    in_lost: list[PerMoveRecord] = []
+    for move in moves:
+        if move.sf_eval_before_cp is None:
+            continue
+        sign = 1 if move.model_side == Side.WHITE else -1
+        model_eval_before = sign * move.sf_eval_before_cp
+        if model_eval_before >= -LOST_POSITION_THRESHOLD_CP:
+            consequential.append(move)
+        else:
+            in_lost.append(move)
+    return consequential, in_lost
 
 
 def _legal_rate_tally(records: Iterable[Record]) -> LegalRateBucket:

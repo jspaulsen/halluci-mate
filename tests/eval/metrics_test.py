@@ -12,6 +12,7 @@ import math
 import pytest
 
 from halluci_mate.eval.metrics import (
+    LOST_POSITION_THRESHOLD_CP,
     BlunderBucket,
     CplBucket,
     LegalRateBucket,
@@ -312,6 +313,95 @@ def test_compute_blunder_rate_empty_returns_zero_buckets() -> None:
     zero = BlunderBucket(n=0, blunders=0, rate=0.0)
     assert stats.overall == zero
     assert stats.by_phase == {phase.value: zero for phase in Phase}
+    assert stats.excluding_repetition.overall == zero
+    assert stats.excluding_repetition.by_phase == {phase.value: zero for phase in Phase}
+    assert stats.by_position_context.consequential == zero
+    assert stats.by_position_context.in_lost_position == zero
+
+
+# Two FENs that share no positional bits; only the half-move clock differs.
+# `_position_key` slices to the first four FEN fields, so these collide.
+_FEN_POS_A = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"
+_FEN_POS_A_BUMPED_CLOCK = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 5 3"
+_FEN_POS_B = "rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR b KQkq - 0 1"
+
+
+def test_compute_blunder_rate_excludes_repetition() -> None:
+    """Positions whose first four FEN fields recur within a game are
+    dropped from both numerator and denominator. Differing half-move
+    clocks must not defeat the comparison."""
+    moves = [
+        _move(0, game_id="g0", fen_before=_FEN_POS_A, is_blunder=True),
+        _move(1, game_id="g0", fen_before=_FEN_POS_A_BUMPED_CLOCK, is_blunder=True),
+        _move(2, game_id="g0", fen_before=_FEN_POS_B, is_blunder=False),
+    ]
+    stats = compute_blunder_rate(moves)
+    # Overall keeps every move; excluding_repetition drops the two
+    # POS_A visits and is left with one non-blunder.
+    assert stats.overall.n == 3
+    assert stats.overall.blunders == 2
+    assert stats.overall.rate == pytest.approx(2 / 3)
+    assert stats.excluding_repetition.overall == BlunderBucket(n=1, blunders=0, rate=0.0)
+
+
+def test_compute_blunder_rate_repetition_is_per_game() -> None:
+    """A position recurring across different games is not a repetition —
+    only same-game revisits count."""
+    moves = [
+        _move(0, game_id="g0", fen_before=_FEN_POS_A, is_blunder=True),
+        _move(1, game_id="g1", fen_before=_FEN_POS_A, is_blunder=False),
+    ]
+    stats = compute_blunder_rate(moves)
+    assert stats.excluding_repetition.overall == BlunderBucket(n=2, blunders=1, rate=0.5)
+
+
+def test_compute_blunder_rate_position_context_for_white_model() -> None:
+    """Model-perspective eval = white-relative eval for a white-model.
+
+    Threshold is -LOST_POSITION_THRESHOLD_CP cp from the model's view."""
+    cutoff = -LOST_POSITION_THRESHOLD_CP
+    moves = [
+        _move(0, model_side=Side.WHITE, sf_eval_before_cp=cutoff, is_blunder=True),
+        _move(1, model_side=Side.WHITE, sf_eval_before_cp=cutoff - 1, is_blunder=True),
+        _move(2, model_side=Side.WHITE, sf_eval_before_cp=100, is_blunder=False),
+        _move(3, model_side=Side.WHITE, sf_eval_before_cp=None, is_blunder=True),
+    ]
+    stats = compute_blunder_rate(moves)
+    # Cutoff is inclusive in `consequential`; one over the line goes to lost.
+    # The None record is dropped from both buckets.
+    assert stats.by_position_context.consequential == BlunderBucket(n=2, blunders=1, rate=0.5)
+    assert stats.by_position_context.in_lost_position == BlunderBucket(n=1, blunders=1, rate=1.0)
+
+
+def test_compute_blunder_rate_position_context_for_black_model() -> None:
+    """For a black-model, eval is sign-flipped: a positive
+    white-relative eval means the model is losing."""
+    moves = [
+        _move(0, model_side=Side.BLACK, sf_eval_before_cp=LOST_POSITION_THRESHOLD_CP + 1, is_blunder=True),
+        _move(1, model_side=Side.BLACK, sf_eval_before_cp=-LOST_POSITION_THRESHOLD_CP, is_blunder=False),
+    ]
+    stats = compute_blunder_rate(moves)
+    assert stats.by_position_context.in_lost_position == BlunderBucket(n=1, blunders=1, rate=1.0)
+    assert stats.by_position_context.consequential == BlunderBucket(n=1, blunders=0, rate=0.0)
+
+
+def test_compute_all_vs_stockfish_emits_blunder_breakdowns() -> None:
+    """`metrics.json` carries the new sub-blocks alongside `overall` /
+    `by_phase`."""
+    records: list[Record] = [
+        _move(0, sf_eval_before_cp=10, centipawn_loss=10, is_blunder=False),
+        _move(1, sf_eval_before_cp=10, centipawn_loss=400, is_blunder=True),
+        _game(2, result="1-0"),
+    ]
+    metrics = compute_all(records, DEFAULT_CONFIG)
+    blunder = metrics["blunder_rate"]
+    assert "excluding_repetition" in blunder
+    assert "by_position_context" in blunder
+    assert blunder["excluding_repetition"]["overall"] == {"n": 2, "blunders": 1, "rate": pytest.approx(0.5)}
+    assert blunder["by_position_context"]["consequential"]["blunders"] == 1
+    assert blunder["by_position_context"]["in_lost_position"]["blunders"] == 0
+    # Round-trip through json to pin the schema as primitives.
+    json.loads(json.dumps(metrics))
 
 
 def test_compute_all_vs_stockfish_emits_cpl_and_blunder_when_present() -> None:
