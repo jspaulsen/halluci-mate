@@ -49,7 +49,15 @@ uv run python scripts/eval.py report <run-id>
 ### Exporting a DPO dataset
 
 `export-dpo` is a post-hoc transform over a `vs-stockfish` run directory; it
-does not replay games.
+does not replay games. Each output line is a JSON object with fields:
+
+- `prompt` — FEN before the move (human-readable, also used for dedup).
+- `moves_uci` — list of UCI moves from the game's start position up to (but
+  not including) the labeled move. This is the prompt the model was actually
+  conditioned on; the FEN string is not in the tokenizer's vocabulary.
+- `model_side` — `"white"` or `"black"`; determines the leading `<WHITE>` /
+  `<BLACK>` perspective token at training time.
+- `chosen` / `rejected` — UCI moves.
 
 ```bash
 # Legality pairs (any vs-stockfish run): rescued mask move (chosen) vs.
@@ -65,7 +73,30 @@ uv run python scripts/eval.py export-dpo <run-id> \
 # Both flavors into one file, deduped by FEN (first pair wins).
 uv run python scripts/eval.py export-dpo <run-id> \
     --output data/dpo_both.jsonl --flavor both --threshold 200 --dedup-by-fen
+
+# Quality pairs scoped to moves played from positions that are not yet lost
+# and that do not recur within the same game — the recommended filters for
+# the Phase 3 (quality) DPO training set.
+uv run python scripts/eval.py export-dpo <run-id> \
+    --output data/dpo_consequential.jsonl --flavor quality \
+    --require-consequential --exclude-repetition
 ```
+
+### DPO training
+
+`scripts/train_dpo.py` consumes the JSONL produced above via TRL's
+`DPOTrainer`. It loads a base checkpoint (default
+`jspaulsen/halluci-mate-v1b`) as both policy and reference model, formats
+each pair into the prompt sequence the chess tokenizer expects (perspective
+token + UCI history), and trains a single move completion against
+chosen/rejected.
+
+```bash
+uv run accelerate launch scripts/train_dpo.py
+```
+
+Defaults are conservative (LR 5e-7, beta 0.1, single epoch); edit the
+`main()` signature for hyperparam sweeps.
 
 See `docs/eval_harness.md` for the full record schema, metrics, and design
 rationale.
