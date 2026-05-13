@@ -80,6 +80,81 @@ def test_build_legality_pairs_picks_only_illegal_raw_records() -> None:
     assert pairs[1].rejected == "d2d9"
 
 
+def test_build_quality_pairs_require_consequential_drops_lost_positions() -> None:
+    """``require_consequential`` keeps only moves played from positions
+    not yet that-far-down (model-perspective eval-before >= -300 cp)."""
+    records = [
+        # Consequential — model is still in the game.
+        _blunder_record(event_id=0, cpl=300, sf_eval_before_cp=-200),
+        # Already lost: eval_before below the threshold.
+        _blunder_record(event_id=1, cpl=400, sf_eval_before_cp=-500),
+        # Black model: eval is sign-flipped, +500 cp white-relative = -500 model-relative.
+        _blunder_record(event_id=2, cpl=400, sf_eval_before_cp=500, model_side="black"),
+    ]
+    pairs = list(build_quality_pairs(records, threshold=200, require_consequential=True))
+    assert len(pairs) == 1
+    assert pairs[0].rejected == "a2a3"
+
+
+def test_build_quality_pairs_exclude_repetition_drops_recurring_positions() -> None:
+    """``exclude_repetition`` drops moves whose position-key recurs in
+    the same game from both numerator and denominator."""
+    pos_a = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"
+    pos_a_bumped = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 5 3"
+    pos_b = "rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR b KQkq - 0 1"
+    records = [
+        _blunder_record(event_id=0, cpl=300, game_id="g0", fen_before=pos_a),
+        _blunder_record(event_id=1, cpl=300, game_id="g0", fen_before=pos_a_bumped),
+        _blunder_record(event_id=2, cpl=300, game_id="g0", fen_before=pos_b),
+    ]
+    pairs = list(build_quality_pairs(records, threshold=200, exclude_repetition=True))
+    assert len(pairs) == 1
+    assert pairs[0].prompt == pos_b
+
+
+def test_build_quality_pairs_filters_compose() -> None:
+    """Both filters applied together drop anything that fails either."""
+    pos_a = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"
+    records = [
+        # In-lost AND repeats → dropped by both.
+        _blunder_record(event_id=0, cpl=300, game_id="g0", fen_before=pos_a, sf_eval_before_cp=-700),
+        _blunder_record(event_id=1, cpl=300, game_id="g0", fen_before=pos_a, sf_eval_before_cp=-700),
+        # Consequential and unique → survives.
+        _blunder_record(event_id=2, cpl=300, game_id="g0", fen_before=SECOND_FEN, sf_eval_before_cp=-100),
+    ]
+    pairs = list(build_quality_pairs(records, threshold=200, require_consequential=True, exclude_repetition=True))
+    assert len(pairs) == 1
+    assert pairs[0].prompt == SECOND_FEN
+
+
+def test_export_dpo_passes_quality_filters_through(tmp_path: Path) -> None:
+    """End-to-end: the CLI-facing entry point honours both filter flags."""
+    pos_a = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"
+    run_dir = tmp_path / "run"
+    _seed_run(
+        run_dir,
+        [
+            _blunder_record(event_id=0, cpl=300, sf_eval_before_cp=-700),  # in-lost
+            _blunder_record(event_id=1, cpl=300, game_id="gx", fen_before=pos_a, sf_eval_before_cp=-100),
+            _blunder_record(event_id=2, cpl=300, game_id="gx", fen_before=pos_a, sf_eval_before_cp=-100),  # repetition with prev
+            _blunder_record(event_id=3, cpl=300, fen_before=SECOND_FEN, sf_eval_before_cp=-100),  # survivor
+        ],
+        analyze=True,
+    )
+    output = tmp_path / "out.jsonl"
+    n = export_dpo(
+        run_dir=run_dir,
+        output=output,
+        flavor=DpoFlavor.QUALITY,
+        threshold=200,
+        require_consequential=True,
+        exclude_repetition=True,
+    )
+    assert n == 1
+    [pair] = _read_jsonl(output)
+    assert pair["prompt"] == SECOND_FEN
+
+
 def test_build_quality_pairs_thresholds_and_skips_missing_analysis() -> None:
     records = [
         _blunder_record(event_id=0, cpl=300),
