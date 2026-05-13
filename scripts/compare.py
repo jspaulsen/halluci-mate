@@ -135,7 +135,13 @@ def _vs_stockfish_headlines(metrics: dict[str, Any]) -> dict[str, float]:
     win_overall = metrics.get("win_rate", {}).get("overall", {})
     legal_overall = metrics.get("legal_rate", {}).get("overall", {})
     cpl_overall = metrics.get("centipawn_loss", {}).get("overall", {}) if "centipawn_loss" in metrics else {}
-    blunder_overall = metrics.get("blunder_rate", {}).get("overall", {}) if "blunder_rate" in metrics else {}
+    blunder = metrics.get("blunder_rate", {}) if "blunder_rate" in metrics else {}
+    blunder_overall = blunder.get("overall", {})
+    blunder_no_rep = blunder.get("excluding_repetition", {}).get("overall", {})
+    blunder_ctx = blunder.get("by_position_context", {})
+    tactical = metrics.get("tactical_oversight_rate", {})
+    tactical_overall = tactical.get("overall", {})
+    tactical_ctx = tactical.get("by_position_context", {})
     return _filter_numeric(
         {
             "win_rate": win_overall.get("win_rate"),
@@ -149,6 +155,12 @@ def _vs_stockfish_headlines(metrics: dict[str, Any]) -> dict[str, float]:
             "cpl_median": cpl_overall.get("median"),
             "cpl_p95": cpl_overall.get("p95"),
             "blunder_rate": blunder_overall.get("rate"),
+            "blunder_rate_no_rep": blunder_no_rep.get("rate"),
+            "blunder_consequential": blunder_ctx.get("consequential", {}).get("rate"),
+            "blunder_in_lost": blunder_ctx.get("in_lost_position", {}).get("rate"),
+            "tactical_oversight": tactical_overall.get("rate"),
+            "tactical_oversight_consequential": tactical_ctx.get("consequential", {}).get("rate"),
+            "tactical_oversight_in_lost": tactical_ctx.get("in_lost_position", {}).get("rate"),
         }
     )
 
