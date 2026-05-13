@@ -70,6 +70,19 @@ uv run python scripts/eval.py export-dpo <run-id> \
 See `docs/eval_harness.md` for the full record schema, metrics, and design
 rationale.
 
+### Comparing two models
+
+`scripts/compare.py` is a Streamlit dashboard that scans `evals/`, groups runs
+by checkpoint, and renders a side-by-side metrics table + bar charts for
+vs-stockfish, legal-rate, and perplexity. Each section has a run picker per
+model (defaulting to the most recent) so you can flip between, e.g., a
+general-blitz perplexity run and a high-elo perplexity run for the same
+checkpoint.
+
+```bash
+uv run streamlit run scripts/compare.py
+```
+
 ## Development
 
 ```bash
