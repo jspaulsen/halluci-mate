@@ -61,6 +61,28 @@ def _blunder_record(event_id: int, *, cpl: int, **overrides: object) -> PerMoveR
     return make_per_move_record(event_id=event_id, **fields)
 
 
+def test_build_quality_pairs_reconstruct_history_within_game() -> None:
+    """``moves_uci`` is the UCI history (interleaved opponent + model moves)
+    up to but not including the labeled move.
+
+    Per-move records are only emitted on the model's plies; the opponent's
+    reply at ``ply-1`` shows up on the *next* record's ``prior_opponent_move``.
+    The exporter walks records in ply order and snapshots the history just
+    before applying the opponent reply + model move to the running list.
+    """
+    records = [
+        # Model plays white, ply 0: no prior opponent move, empty history.
+        _blunder_record(event_id=0, cpl=300, game_id="g0", ply=0, model_move="e2e4", sf_best_move="d2d4"),
+        # Ply 2: opponent replied "e7e5", history = ["e2e4", "e7e5"].
+        _blunder_record(event_id=1, cpl=300, game_id="g0", ply=2, model_move="g1f3", prior_opponent_move="e7e5", sf_best_move="b1c3"),
+        # Different game: model plays black, ply 1, opponent opened "d2d4".
+        _blunder_record(event_id=2, cpl=300, game_id="g1", ply=1, model_side="black", model_move="d7d5", prior_opponent_move="d2d4", sf_best_move="g8f6"),
+    ]
+    pairs = list(build_quality_pairs(records, threshold=200))
+    assert [p.moves_uci for p in pairs] == [[], ["e2e4", "e7e5"], ["d2d4"]]
+    assert [p.model_side for p in pairs] == ["white", "white", "black"]
+
+
 def test_build_legality_pairs_picks_only_illegal_raw_records() -> None:
     records = [
         _illegal_raw_record(event_id=0),
@@ -203,7 +225,13 @@ def test_export_dpo_legality_writes_pairs(tmp_path: Path) -> None:
 
     assert n == 1
     [pair] = _read_jsonl(output)
-    assert pair == {"prompt": START_FEN, "chosen": "e2e4", "rejected": "e2e9"}
+    assert pair == {
+        "prompt": START_FEN,
+        "moves_uci": [],
+        "model_side": "white",
+        "chosen": "e2e4",
+        "rejected": "e2e9",
+    }
 
 
 def test_export_dpo_quality_requires_analyze(tmp_path: Path) -> None:

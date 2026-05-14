@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, ConfigDict
 
 from halluci_mate.eval.metrics import LOST_POSITION_THRESHOLD_CP, drop_repetition_moves, is_consequential
-from halluci_mate.eval.records import PerMoveRecord
+from halluci_mate.eval.records import PerMoveRecord, Side
 from halluci_mate.eval.runs import RunReader
 
 if TYPE_CHECKING:
@@ -60,17 +60,61 @@ class DpoExportError(ValueError):
 class DpoPair(BaseModel):
     """One DPO preference pair, serialized as JSONL.
 
-    ``prompt`` is the FEN before the move; ``chosen`` / ``rejected`` are UCI
-    moves. The DPO trainer is responsible for templating the prompt and
-    moves into whatever string form the model expects — the exporter does
-    not commit to a tokenization here.
+    Fields:
+
+    * ``prompt`` — FEN before the move. Kept for human inspection and dedup;
+      the model itself is conditioned on ``moves_uci`` + ``model_side``, not
+      on the FEN string.
+    * ``moves_uci`` — UCI move history from the game's start position up to
+      (but not including) the move being labeled. Combined with
+      ``model_side`` this is the exact prompt context the model saw when it
+      made the rejected move — required because the chess tokenizer has no
+      FEN vocabulary (see ``Game.tokenize``).
+    * ``model_side`` — ``"white"`` or ``"black"``; determines the leading
+      ``<WHITE>``/``<BLACK>`` perspective token at training time.
+    * ``chosen`` / ``rejected`` — UCI moves. The DPO trainer is responsible
+      for templating these into the model's token form; the exporter does
+      not commit to a tokenization here.
     """
 
     model_config = ConfigDict(frozen=True)
 
     prompt: str
+    moves_uci: list[str]
+    model_side: str
     chosen: str
     rejected: str
+
+
+def _build_history_index(records: Iterable[PerMoveRecord]) -> dict[int, list[str]]:
+    """Map ``event_id`` → UCI move history up to (excluding) that record's ply.
+
+    Per-move records are only emitted on the model's plies, so the opponent's
+    intervening move appears as the *next* record's ``prior_opponent_move``
+    (see ``PerMoveRecord``). We walk each game in ply order, append the
+    opponent's reply (if any) then the model's move after snapshotting, and
+    the snapshot taken before either append is exactly the prompt context
+    the model saw on that record.
+    """
+    by_game: dict[str, list[PerMoveRecord]] = {}
+    for record in records:
+        by_game.setdefault(record.game_id, []).append(record)
+
+    index: dict[int, list[str]] = {}
+    for game_records in by_game.values():
+        game_records.sort(key=lambda r: r.ply)
+        history: list[str] = []
+        for record in game_records:
+            if record.prior_opponent_move is not None:
+                history.append(record.prior_opponent_move)
+            index[record.event_id] = list(history)
+            history.append(record.model_move)
+    return index
+
+
+def _side_value(side: Side | str) -> str:
+    """Normalize a ``Side`` enum or its string form to its ``str`` value."""
+    return side.value if isinstance(side, Side) else side
 
 
 def build_legality_pairs(records: Iterable[PerMoveRecord]) -> Iterator[DpoPair]:
@@ -82,9 +126,17 @@ def build_legality_pairs(records: Iterable[PerMoveRecord]) -> Iterator[DpoPair]:
     ``model_move == raw_sample_move`` — both sides would be illegal and the
     pair would be useless for legality training.
     """
+    records = list(records)
+    history_index = _build_history_index(records)
     for record in records:
         if record.mask_used and not record.raw_sample_legal:
-            yield DpoPair(prompt=record.fen_before, chosen=record.model_move, rejected=record.raw_sample_move)
+            yield DpoPair(
+                prompt=record.fen_before,
+                moves_uci=history_index[record.event_id],
+                model_side=_side_value(record.model_side),
+                chosen=record.model_move,
+                rejected=record.raw_sample_move,
+            )
 
 
 def build_quality_pairs(
@@ -117,8 +169,10 @@ def build_quality_pairs(
     ``exclude_repetition`` must materialize the input so the per-game
     counts can be tallied before iteration.
     """
+    records = list(records)
+    history_index = _build_history_index(records)
     if exclude_repetition:
-        records = drop_repetition_moves(list(records))
+        records = drop_repetition_moves(records)
     for record in records:
         if record.sf_best_move is None or record.centipawn_loss is None:
             continue
@@ -128,7 +182,13 @@ def build_quality_pairs(
             continue
         if require_consequential and not is_consequential(record, lost_position_threshold_cp):
             continue
-        yield DpoPair(prompt=record.fen_before, chosen=record.sf_best_move, rejected=record.model_move)
+        yield DpoPair(
+            prompt=record.fen_before,
+            moves_uci=history_index[record.event_id],
+            model_side=_side_value(record.model_side),
+            chosen=record.sf_best_move,
+            rejected=record.model_move,
+        )
 
 
 def export_dpo(
