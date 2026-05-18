@@ -13,6 +13,7 @@ from pathlib import Path
 
 import mlflow
 import torch
+import typer
 from accelerate import PartialState
 from accelerate.utils import broadcast_object_list
 from datasets import Dataset, load_dataset
@@ -28,13 +29,14 @@ load_dotenv()
 
 def main(
     warmup_ratio: float = 0.005,
-    output_directory: Path = Path("runs-v1a-ft"),
-    base_model: str = "jspaulsen/halluci-mate-v1a",
-    data_dir: Path = Path("data/v1a-highelo"),
+    output_directory: Path = Path("runs-v2a-ft"),
+    base_model: str = "jspaulsen/halluci-mate-v2a",
+    data_dir: Path = Path("data/rapid-classical"),  # Path("data/v1a-highelo"),
+    resume_from: Path | None = None,
 ) -> None:
-    batch_size: int = 256
-    gradient_accumulation_steps: int = 1
-    epochs: int = 1
+    batch_size: int = 128
+    gradient_accumulation_steps: int = 2
+    epochs: int = 2
     learning_rate: float = 3e-5
     weight_decay: float = 0.01
     tokenizer = ChessTokenizer()
@@ -103,7 +105,7 @@ def main(
             eval_strategy="steps",
             eval_steps=250,
             save_steps=100,
-            save_total_limit=10,
+            save_total_limit=30,
             optim="paged_adamw_8bit",
             weight_decay=weight_decay,
             lr_scheduler_type="cosine_with_min_lr",
@@ -116,8 +118,8 @@ def main(
         ),
     )
 
-    trainer.train()
+    trainer.train(resume_from_checkpoint=str(resume_from) if resume_from else None)
 
 
 if __name__ == "__main__":
-    main()
+    typer.run(main)

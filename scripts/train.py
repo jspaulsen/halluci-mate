@@ -21,8 +21,8 @@ def main(
     warmup_ratio: float = 0.01,
     output_directory: Path = Path("runs-v1"),
 ) -> None:
-    batch_size: int = 256
-    gradient_accumulation_steps: int = 1
+    batch_size: int = 128
+    gradient_accumulation_steps: int = 2
     epochs: int = 1
     learning_rate: float = 3e-4  # Conservative rate for from-scratch training stability
     weight_decay: float = 0.01  # Appropriate for 0.6B model (0.1 is for much larger models)
