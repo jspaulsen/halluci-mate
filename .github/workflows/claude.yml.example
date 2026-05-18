@@ -1,0 +1,34 @@
+# Opt-in Claude GitHub Action. Rename this file to `claude.yml` to enable.
+# Setup once (one-time, per target repo):
+#   1) `gh secret set ANTHROPIC_API_KEY` in this repo
+#   2) Run `/install-github-app` from a Claude Code session in this repo
+#   3) Rename this file: `mv claude.yml.example claude.yml`
+
+name: claude
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
+
+jobs:
+  claude:
+    if: |
+      contains(github.event.comment.body, '@claude') ||
+      contains(github.event.review.body, '@claude')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}

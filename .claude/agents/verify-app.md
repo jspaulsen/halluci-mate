@@ -1,6 +1,7 @@
 ---
 name: verify-app
 description: Run the full verification suite (ruff, ruff format, ty, pytest) and report a PASS/FAIL table. Read-only — no fixes.
+model: claude-sonnet-4-6
 ---
 
 # Verify App

@@ -1,0 +1,4 @@
+{
+	"//": ".mcp.json · project-scope MCP server config. Empty by default so this repo works for any user with no third-party tokens, no network-allowlist tweaks, and no MCP /doctor warnings. Add real servers under `mcpServers` when you want them. For real servers (e.g. Slack or GitHub MCP) set tokens via env vars and add the host to your sandbox network allowlist. Strict JSON has no comments — `//` keys are loader-tolerated.",
+	"mcpServers": {}
+}

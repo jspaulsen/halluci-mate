@@ -1,0 +1,61 @@
+{
+  "$comment": "Declarative policy file consumed by block-dangerous-bash.sh. Each rule has a stable id (used in block messages and rationale.md cross-refs), a POSIX-ERE pattern matched against the proposed Bash command, and a human reason printed when the rule fires. Add/remove rules here; do not edit the script. Inspired by tobinsouth/marketplace-policy-scan-hook (declarative-policy half only — runtime cost is bash regex, not an LLM call).",
+  "version": 1,
+  "rules": [
+    {
+      "id": "rm-rf-root",
+      "pattern": "(^|[^a-zA-Z0-9_/])rm[[:space:]]+(-[rRfF]+[[:space:]]+)+/([[:space:]]|$)",
+      "reason": "Refusing to rm -rf /"
+    },
+    {
+      "id": "rm-rf-home-tilde",
+      "pattern": "(^|[^a-zA-Z0-9_/])rm[[:space:]]+-[rRfF]+[[:space:]]+~/?([[:space:]]|$)",
+      "reason": "Refusing to rm -rf $HOME"
+    },
+    {
+      "id": "rm-rf-home-var",
+      "pattern": "(^|[^a-zA-Z0-9_/])rm[[:space:]]+-[rRfF]+[[:space:]]+\\$HOME/?([[:space:]]|$)",
+      "reason": "Refusing to rm -rf $HOME"
+    },
+    {
+      "id": "git-push-force-protected-1",
+      "pattern": "git[[:space:]]+push[[:space:]]+(--force|-f)([[:space:]]|=).*[[:space:]](main|master|production|prod|release)([[:space:]]|$)",
+      "reason": "Refusing force-push to a protected branch"
+    },
+    {
+      "id": "git-push-force-protected-2",
+      "pattern": "git[[:space:]]+push[[:space:]].*[[:space:]](main|master|production|prod|release)([[:space:]]|$).*(--force|-f)([[:space:]]|=|$)",
+      "reason": "Refusing force-push to a protected branch"
+    },
+    {
+      "id": "git-reset-hard-protected",
+      "pattern": "git[[:space:]]+reset[[:space:]]+--hard[[:space:]]+(origin/)?(main|master|production|prod)([[:space:]]|$)",
+      "reason": "Use a topic branch; refusing hard-reset to protected ref"
+    },
+    {
+      "id": "chmod-world-writable",
+      "pattern": "(^|[^a-zA-Z0-9_])chmod[[:space:]]+(-R[[:space:]]+)?0?777([[:space:]]|$)",
+      "reason": "Refusing chmod 777"
+    },
+    {
+      "id": "sql-destructive",
+      "pattern": "(DROP|TRUNCATE)[[:space:]]+(TABLE|DATABASE|SCHEMA)([[:space:]]|$)",
+      "reason": "Refusing destructive SQL — run via migration framework instead"
+    },
+    {
+      "id": "dd-block-device",
+      "pattern": "dd[[:space:]]+.*of=/dev/[a-z]",
+      "reason": "Refusing dd to a block device"
+    },
+    {
+      "id": "mkfs-block-device",
+      "pattern": "mkfs(\\.[a-z0-9]+)?[[:space:]]+/dev/",
+      "reason": "Refusing mkfs on a block device"
+    },
+    {
+      "id": "curl-pipe-shell",
+      "pattern": "(curl|wget)[[:space:]]+[^|]*[|][[:space:]]*(bash|sh|zsh)([[:space:]]|$)",
+      "reason": "Refusing shell-pipe install — download, inspect, then run"
+    }
+  ]
+}

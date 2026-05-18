@@ -1,6 +1,7 @@
 ---
 name: build-validator
 description: Verify the project installs and packages correctly — clean caches, uv sync, core imports, script compile, missing-dep scan.
+model: claude-sonnet-4-6
 ---
 
 # Build Validator

@@ -1,0 +1,11 @@
+# Gitignore-syntax list of untracked files to copy into newly-created worktrees.
+#
+# The dotenv + settings.local.json entries are stack-neutral. The dependency-cache
+# entry below is this repo's Python/uv cache so worktrees don't re-install.
+#   Python: .venv/      (or .tox/, __pycache__/)
+
+.env
+.env.local
+.env.*.local
+.claude/settings.local.json
+.venv/

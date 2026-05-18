@@ -1,0 +1,51 @@
+# Opt-in AI security-review CI Action. Rename this file to `claude-review.yml`
+# to enable. Only review TRUSTED PRs — the action is not hardened against prompt
+# injection from PR contents.
+# Setup once (one-time, per target repo):
+#   1) `gh secret set ANTHROPIC_API_KEY` (already set if claude.yml.example active)
+#   2) Configure repo: Settings → Actions → Fork PR Workflows → "Require approval
+#      for all external contributors" (avoids prompt-injection attacks from forks)
+#   3) Rename this file: `mv claude-review.yml.example claude-review.yml`
+#   4) Optional: tune `exclude-directories`, add `paths-ignore` to skip docs PRs
+#
+# Cost-control knobs (uncomment in the action `with:` block as needed):
+#   - exclude-directories: 'docs,examples,vendor'
+#   - claudecode-timeout: '10'  (default 20 min)
+#   - run-every-commit: 'false' (default; cache prevents duplicate runs per SHA)
+#
+# To narrow trigger scope (saves spend), uncomment the paths filter in `on:` below.
+
+name: claude-review
+
+on:
+  pull_request:
+    # Uncomment to skip docs-only PRs:
+    # paths-ignore:
+    #   - '**.md'
+    #   - 'docs/**'
+
+permissions:
+  pull-requests: write   # leave findings as PR comments
+  contents: read         # read the diff; no write needed
+
+jobs:
+  security-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 2
+
+      # SHA-pinned to 0c6a49f1 (2026-02-11) — bump intentionally after reviewing the
+      # diff against anthropics/claude-code-security-review. Moving `@main` is
+      # discouraged for security-sensitive workflows that hold an API key.
+      - uses: anthropics/claude-code-security-review@0c6a49f1
+        with:
+          claude-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          comment-pr: true
+          upload-results: true
+          # exclude-directories: 'docs,examples,vendor'
+          # claude-model: 'claude-opus-4-7-20260101'
+          # claudecode-timeout: '15'
