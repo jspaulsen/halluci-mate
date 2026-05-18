@@ -1,4 +1,4 @@
-"""DPO fine-tune the v1b chess LLM on preference pairs from scripts/eval.py export-dpo.
+"""DPO fine-tune the v2b chess LLM on preference pairs from scripts/eval.py export-dpo.
 
 Reads JSONL produced by `eval.py export-dpo` (one DpoPair per line with fields
 ``prompt`` / ``moves_uci`` / ``model_side`` / ``chosen`` / ``rejected``). The
@@ -78,9 +78,9 @@ def _load_pairs(path: Path) -> Dataset:
 
 
 def main(
-    pairs_path: Path = Path("dpo/v1b-consequential.jsonl"),
-    output_directory: Path = Path("runs-v1b-dpo"),
-    base_model: str = "jspaulsen/halluci-mate-v1b",
+    pairs_path: Path = Path("dpo/v2b-consequential.jsonl"),
+    output_directory: Path = Path("runs-v2b-dpo"),
+    base_model: str = "jspaulsen/halluci-mate-v2b",
     beta: float = 0.1,
     learning_rate: float = 1e-5,
     epochs: int = 2,
@@ -116,7 +116,7 @@ def main(
     name_list: list[str | None] = [None]
 
     if state.is_main_process:
-        mlflow.set_experiment("halluci-mate-v1b-dpo")
+        mlflow.set_experiment("halluci-mate-v2b-dpo")
         mlflow.start_run()
         mlflow.log_params(
             {
@@ -167,8 +167,18 @@ def main(
         logging_steps=1,
         eval_strategy="steps" if eval_dataset is not None else "no",
         eval_steps=100,
-        save_steps=200,
+        save_strategy="steps",
+        save_steps=100,
         save_total_limit=5,
+        # On v1b→v1c and v2b→v2b-dpo this recipe plateaus on eval_rewards/accuracies
+        # around step 200 while margins keep growing through 2 epochs — the late
+        # checkpoints are behaviorally worse on vs-stockfish (more endgame blunders,
+        # wider CPL tail) despite eval_loss continuing to drop. Picking on accuracies
+        # with greater_is_better=True keeps the *first* tied checkpoint, which has
+        # been the right one on both prior runs.
+        load_best_model_at_end=eval_dataset is not None,
+        metric_for_best_model="rewards/accuracies",
+        greater_is_better=True,
         optim="paged_adamw_8bit",
         lr_scheduler_type="cosine",
         max_grad_norm=1.0,
