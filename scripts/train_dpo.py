@@ -22,6 +22,7 @@ from pathlib import Path
 
 import mlflow
 import torch
+import typer
 from accelerate import PartialState
 from accelerate.utils import broadcast_object_list
 from datasets import Dataset
@@ -169,16 +170,16 @@ def main(
         eval_steps=100,
         save_strategy="steps",
         save_steps=100,
-        save_total_limit=5,
-        # On v1b→v1c and v2b→v2b-dpo this recipe plateaus on eval_rewards/accuracies
-        # around step 200 while margins keep growing through 2 epochs — the late
-        # checkpoints are behaviorally worse on vs-stockfish (more endgame blunders,
-        # wider CPL tail) despite eval_loss continuing to drop. Picking on accuracies
-        # with greater_is_better=True keeps the *first* tied checkpoint, which has
-        # been the right one on both prior runs.
-        load_best_model_at_end=eval_dataset is not None,
-        metric_for_best_model="rewards/accuracies",
-        greater_is_better=True,
+        # Keep all eval-step checkpoints so we can manually pick the best by
+        # eval_rewards/accuracies after training. The v2c lesson (rewards/accuracies
+        # plateaus near step 200 while eval_loss keeps dropping → late checkpoints
+        # are behaviorally worse on vs-stockfish) still applies; we just enforce it
+        # post-hoc by inspecting trainer_state.json. load_best_model_at_end with
+        # metric_for_best_model="rewards/accuracies" crashes on the current
+        # trl/transformers combo (KeyError in _determine_best_metric): trl emits
+        # the extended eval metrics via a callback that fires *after* selection.
+        save_total_limit=20,
+        load_best_model_at_end=False,
         optim="paged_adamw_8bit",
         lr_scheduler_type="cosine",
         max_grad_norm=1.0,
@@ -200,4 +201,4 @@ def main(
 
 
 if __name__ == "__main__":
-    main()
+    typer.run(main)
