@@ -25,6 +25,7 @@ from halluci_mate.eval.metrics import (
     compute_legal_rate,
     compute_tactical_oversight_rate,
     compute_win_rate,
+    is_tactical_oversight,
 )
 from halluci_mate.eval.records import Evaluator, PerGameRecord, PerMoveRecord, Phase, Record, Side
 from tests.helpers.eval_records import (
@@ -387,6 +388,12 @@ def test_compute_blunder_rate_position_context_for_black_model() -> None:
     assert stats.by_position_context.consequential == BlunderBucket(n=1, blunders=0, rate=0.0)
 
 
+def test_compute_blunder_rate_all_flagged_saturates() -> None:
+    """Every flagged move a blunder → rate 1.0; guards a sum/len swap in the bucket."""
+    moves = [_move(0, is_blunder=True), _move(1, is_blunder=True)]
+    assert compute_blunder_rate(moves).overall == BlunderBucket(n=2, blunders=2, rate=1.0)
+
+
 # Hand-built FENs for tactical-oversight tests. Each pins one
 # attacker-vs-defender configuration so the assertion is unambiguous.
 
@@ -400,8 +407,6 @@ _FEN_BALANCED_TRADE = "4k3/3r4/3r4/3R4/3R4/8/8/4K3 w - - 0 1"
 
 
 def test_is_tactical_oversight_flags_hanging_move() -> None:
-    from halluci_mate.eval.metrics import is_tactical_oversight
-
     flagged = is_tactical_oversight(_move(0, fen_before=_FEN_QUEEN_HANGS, model_move="d2d4"))
     not_flagged = is_tactical_oversight(_move(1, fen_before=_FEN_BALANCED_TRADE, model_move="d5d6"))
     assert flagged is True
@@ -409,10 +414,12 @@ def test_is_tactical_oversight_flags_hanging_move() -> None:
 
 
 def test_is_tactical_oversight_returns_none_for_illegal_or_unparseable() -> None:
-    from halluci_mate.eval.metrics import is_tactical_oversight
-
-    # Illegal UCI from start position: e2e9 is not even a square.
+    # Unparseable UCI from start position: e2e9 is not even a square.
     assert is_tactical_oversight(_move(0, model_move="e2e9")) is None
+    # Well-formed UCI that is illegal from this FEN (no piece on a3).
+    assert is_tactical_oversight(_move(1, model_move="a3a4")) is None
+    # Unparseable FEN.
+    assert is_tactical_oversight(_move(2, fen_before="not a fen", model_move="e2e4")) is None
 
 
 def test_compute_tactical_oversight_rate_overall_and_by_phase() -> None:

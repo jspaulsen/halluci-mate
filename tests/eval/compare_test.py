@@ -10,16 +10,18 @@ import json
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+import pytest
+
 from halluci_mate.eval.compare import (
     discover_runs,
-    latest_run_for,
+    headline_metrics,
     list_checkpoints,
     load_or_compute_metrics,
     runs_for,
 )
 from halluci_mate.eval.records import Evaluator
 from halluci_mate.eval.runs import CONFIG_FILENAME, METRICS_FILENAME, RECORDS_FILENAME, RunWriter
-from tests.helpers.eval_records import make_per_game_record, make_per_move_record
+from tests.helpers.eval_records import make_per_game_record, make_per_move_record, make_per_perplexity_record
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -83,23 +85,6 @@ def test_list_checkpoints_dedupes_and_sorts(tmp_path: Path) -> None:
     assert list_checkpoints(discover_runs(tmp_path)) == ["ckpt-a", "ckpt-b"]
 
 
-def test_latest_run_for_picks_newest_timestamp(tmp_path: Path) -> None:
-    _write_run(tmp_path, "2026-04-30T01-00-00_a_vs-stockfish", "ckpt-a", Evaluator.VS_STOCKFISH)
-    _write_run(tmp_path, "2026-04-30T03-00-00_a_vs-stockfish", "ckpt-a", Evaluator.VS_STOCKFISH)
-    _write_run(tmp_path, "2026-04-30T02-00-00_a_vs-stockfish", "ckpt-a", Evaluator.VS_STOCKFISH)
-    runs = discover_runs(tmp_path)
-    latest = latest_run_for(runs, "ckpt-a", Evaluator.VS_STOCKFISH)
-    assert latest is not None
-    assert latest.run_id.startswith("2026-04-30T03-00-00")
-
-
-def test_latest_run_for_returns_none_when_no_match(tmp_path: Path) -> None:
-    _write_run(tmp_path, "2026-04-30T01-00-00_a_vs-stockfish", "ckpt-a", Evaluator.VS_STOCKFISH)
-    runs = discover_runs(tmp_path)
-    assert latest_run_for(runs, "ckpt-missing", Evaluator.VS_STOCKFISH) is None
-    assert latest_run_for(runs, "ckpt-a", Evaluator.PERPLEXITY) is None
-
-
 def test_runs_for_returns_all_matches_newest_first(tmp_path: Path) -> None:
     _write_run(tmp_path, "2026-04-30T01-00-00_a_vs-stockfish", "ckpt-a", Evaluator.VS_STOCKFISH)
     _write_run(tmp_path, "2026-04-30T03-00-00_b_vs-stockfish", "ckpt-a", Evaluator.VS_STOCKFISH)
@@ -113,6 +98,15 @@ def test_runs_for_returns_all_matches_newest_first(tmp_path: Path) -> None:
         "2026-04-30T01-00-00_a_vs-stockfish",
     ]
     assert runs_for(runs, "ckpt-missing", Evaluator.VS_STOCKFISH) == []
+
+
+def test_runs_for_filters_by_evaluator_within_one_checkpoint(tmp_path: Path) -> None:
+    """A single checkpoint evaluated by two evaluators must not bleed across."""
+    _write_run(tmp_path, "2026-04-30T01-00-00_a_vs-stockfish", "ckpt-a", Evaluator.VS_STOCKFISH)
+    _write_run(tmp_path, "2026-04-30T02-00-00_a_perplexity", "ckpt-a", Evaluator.PERPLEXITY)
+    runs = discover_runs(tmp_path)
+    assert [r.evaluator for r in runs_for(runs, "ckpt-a", Evaluator.VS_STOCKFISH)] == [Evaluator.VS_STOCKFISH]
+    assert [r.evaluator for r in runs_for(runs, "ckpt-a", Evaluator.PERPLEXITY)] == [Evaluator.PERPLEXITY]
 
 
 def test_load_or_compute_metrics_reads_existing_file(tmp_path: Path) -> None:
@@ -138,3 +132,63 @@ def test_load_or_compute_metrics_falls_back_to_compute_all(tmp_path: Path) -> No
     metrics = load_or_compute_metrics(entry)
     assert metrics["evaluator"] == "vs_stockfish"
     assert metrics["win_rate"]["overall"]["wins"] == 1
+
+
+def test_load_or_compute_metrics_falls_back_for_perplexity(tmp_path: Path) -> None:
+    """The compute fallback dispatches on the run's evaluator, not just vs_stockfish."""
+    run_dir = _write_run(tmp_path, "2026-04-30T01-00-00_a_perplexity", "ckpt-a", Evaluator.PERPLEXITY)
+    with RunWriter(run_dir) as writer:
+        writer.append_record(make_per_perplexity_record(0))
+    [entry] = discover_runs(tmp_path)
+    metrics = load_or_compute_metrics(entry)
+    assert metrics["evaluator"] == "perplexity"
+    assert metrics["num_sequences"] == 1
+
+
+# A vs_stockfish payload shaped like `compute_all`'s output, including the
+# nested blunder / tactical sub-blocks the headline flattener reaches into.
+_VS_STOCKFISH_METRICS: dict[str, Any] = {
+    "evaluator": "vs_stockfish",
+    "win_rate": {"overall": {"win_rate": 0.5, "score_rate": 0.6, "wins": 3, "draws": 1, "losses": 2, "unfinished": 0}},
+    "legal_rate": {"overall": {"rate": 0.99}},
+    "blunder_rate": {
+        "overall": {"rate": 0.065},
+        "excluding_repetition": {"overall": {"rate": 0.05}},
+        "by_position_context": {"consequential": {"rate": 0.051}, "in_lost_position": {"rate": 0.2}},
+    },
+    "tactical_oversight_rate": {
+        "overall": {"rate": 0.11},
+        "by_position_context": {"consequential": {"rate": 0.09}, "in_lost_position": {"rate": 0.3}},
+    },
+}
+
+
+def test_headline_metrics_vs_stockfish_flattens_nested_schema() -> None:
+    flat = headline_metrics(Evaluator.VS_STOCKFISH, _VS_STOCKFISH_METRICS)
+    assert flat["win_rate"] == pytest.approx(0.5)
+    assert flat["blunder_rate"] == pytest.approx(0.065)
+    assert flat["blunder_rate_no_rep"] == pytest.approx(0.05)
+    assert flat["blunder_consequential"] == pytest.approx(0.051)
+    assert flat["blunder_in_lost"] == pytest.approx(0.2)
+    assert flat["tactical_oversight"] == pytest.approx(0.11)
+    assert flat["tactical_oversight_consequential"] == pytest.approx(0.09)
+    # CPL absent (run had no --sf-analyze) → omitted, not zero-filled.
+    assert "cpl_mean" not in flat
+
+
+def test_headline_metrics_omits_non_numeric_and_bool() -> None:
+    # bool is an int subclass but must not render as 1.0 / 0.0 in the table.
+    metrics = {"legal_rate": {"overall": {"rate": True, "n": 10, "legal": 9}}}
+    assert headline_metrics(Evaluator.LEGAL_RATE, metrics) == {"n": 10.0, "legal": 9.0}
+
+
+def test_headline_metrics_perplexity() -> None:
+    metrics = {"evaluator": "perplexity", "perplexity": 1.22, "mean_nll": 0.2, "bits_per_token": 0.28, "num_tokens": 3, "num_sequences": 1}
+    flat = headline_metrics(Evaluator.PERPLEXITY, metrics)
+    assert flat["perplexity"] == pytest.approx(1.22)
+    assert flat["num_tokens"] == pytest.approx(3.0)
+
+
+def test_headline_metrics_unsupported_evaluator_and_empty() -> None:
+    assert headline_metrics(Evaluator.PUZZLES, {"anything": 1}) == {}
+    assert headline_metrics(Evaluator.VS_STOCKFISH, {}) == {}

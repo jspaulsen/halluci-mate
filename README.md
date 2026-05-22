@@ -79,7 +79,11 @@ model (defaulting to the most recent) so you can flip between, e.g., a
 general-blitz perplexity run and a high-elo perplexity run for the same
 checkpoint.
 
+Streamlit is an optional dependency (only this dashboard needs it), so install
+the `dashboard` group before launching:
+
 ```bash
+uv sync --group dashboard
 uv run streamlit run scripts/compare.py
 ```
 

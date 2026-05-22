@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import math
 import statistics
+from collections import Counter
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
@@ -307,7 +308,9 @@ def is_tactical_oversight(move: PerMoveRecord) -> bool | None:
     try:
         board = chess.Board(move.fen_before)
         played = chess.Move.from_uci(move.model_move)
-    except (ValueError, IndexError):
+    except ValueError:
+        # chess.Board and Move.from_uci raise ValueError (InvalidMoveError is a
+        # subclass) on malformed FEN / UCI; nothing here raises IndexError.
         return None
     if played not in board.legal_moves:
         return None
@@ -319,7 +322,7 @@ def is_tactical_oversight(move: PerMoveRecord) -> bool | None:
 
 
 def _tactical_oversight_bucket(moves: list[PerMoveRecord]) -> TacticalOversightBucket:
-    flags = [flag for flag in (is_tactical_oversight(m) for m in moves) if flag is not None]
+    flags = [flag for m in moves if (flag := is_tactical_oversight(m)) is not None]
     oversights = sum(flags)
     rate = oversights / len(flags) if flags else 0.0
     return TacticalOversightBucket(n=len(flags), oversights=oversights, rate=rate)
@@ -364,10 +367,9 @@ def drop_repetition_moves(moves: list[PerMoveRecord]) -> list[PerMoveRecord]:
     later) is filtered. Inter-game collisions are ignored — repetition
     is a within-game concept.
     """
-    counts: dict[tuple[str, str], int] = {}
-    for move in moves:
-        counts[(move.game_id, position_key(move.fen_before))] = counts.get((move.game_id, position_key(move.fen_before)), 0) + 1
-    return [m for m in moves if counts[(m.game_id, position_key(m.fen_before))] == 1]
+    keys = [(m.game_id, position_key(m.fen_before)) for m in moves]
+    counts = Counter(keys)
+    return [m for m, key in zip(moves, keys, strict=True) if counts[key] == 1]
 
 
 def is_consequential(move: PerMoveRecord, threshold_cp: int = LOST_POSITION_THRESHOLD_CP) -> bool:

@@ -1038,7 +1038,6 @@ dependencies = [
     { name = "mlflow" },
     { name = "pydantic" },
     { name = "python-dotenv" },
-    { name = "streamlit" },
     { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'linux' and sys_platform != 'win32'" },
     { name = "torch", version = "2.11.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "tqdm" },
@@ -1047,6 +1046,9 @@ dependencies = [
 ]
 
 [package.dev-dependencies]
+dashboard = [
+    { name = "streamlit" },
+]
 dev = [
     { name = "pytest" },
     { name = "ruff" },
@@ -1063,7 +1065,6 @@ requires-dist = [
     { name = "mlflow", specifier = ">=3.10.1" },
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
-    { name = "streamlit", specifier = ">=1.40" },
     { name = "torch", marker = "sys_platform != 'linux' and sys_platform != 'win32'", specifier = ">=2.10.0" },
     { name = "torch", marker = "sys_platform == 'linux' or sys_platform == 'win32'", specifier = ">=2.10.0", index = "https://download.pytorch.org/whl/cu130" },
     { name = "tqdm", specifier = ">=4.66.0" },
@@ -1072,6 +1073,7 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
+dashboard = [{ name = "streamlit", specifier = ">=1.40" }]
 dev = [
     { name = "pytest", specifier = ">=8.0" },
     { name = "ruff", specifier = ">=0.11" },

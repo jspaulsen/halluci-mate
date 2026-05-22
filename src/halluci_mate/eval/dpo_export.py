@@ -157,16 +157,19 @@ def export_dpo(
     config = reader.read_config()
     per_move_records = [r for r in reader.read_records() if isinstance(r, PerMoveRecord)]
 
+    wants_legality = flavor in (DpoFlavor.LEGALITY, DpoFlavor.BOTH)
+    wants_quality = flavor in (DpoFlavor.QUALITY, DpoFlavor.BOTH)
+
     analyze = config.get(CONFIG_ANALYZE_KEY)
-    if flavor in (DpoFlavor.QUALITY, DpoFlavor.BOTH) and not analyze:
+    if wants_quality and not analyze:
         raise DpoExportError(
             f"flavor={flavor.value} requires a run collected with --sf-analyze; {run_dir}/config.json has {CONFIG_ANALYZE_KEY}={analyze!r}",
         )
 
     pairs: list[DpoPair] = []
-    if flavor in (DpoFlavor.LEGALITY, DpoFlavor.BOTH):
+    if wants_legality:
         pairs.extend(build_legality_pairs(per_move_records))
-    if flavor in (DpoFlavor.QUALITY, DpoFlavor.BOTH):
+    if wants_quality:
         pairs.extend(
             build_quality_pairs(
                 per_move_records,

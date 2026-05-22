@@ -155,6 +155,33 @@ def test_export_dpo_passes_quality_filters_through(tmp_path: Path) -> None:
     assert pair["prompt"] == SECOND_FEN
 
 
+def test_export_dpo_both_keeps_legality_when_quality_filters_drop_all(tmp_path: Path) -> None:
+    """`require_consequential` / `exclude_repetition` are quality-only; legality
+    pairs must survive untouched under ``flavor=both``."""
+    run_dir = tmp_path / "run"
+    _seed_run(
+        run_dir,
+        [
+            _illegal_raw_record(event_id=0),
+            # Quality blunder from an already-lost position → dropped by require_consequential.
+            _blunder_record(event_id=1, cpl=300, fen_before=SECOND_FEN, sf_eval_before_cp=-700),
+        ],
+        analyze=True,
+    )
+    output = tmp_path / "out.jsonl"
+    n = export_dpo(
+        run_dir=run_dir,
+        output=output,
+        flavor=DpoFlavor.BOTH,
+        threshold=200,
+        require_consequential=True,
+        exclude_repetition=True,
+    )
+    assert n == 1
+    [pair] = _read_jsonl(output)
+    assert pair["rejected"] == "e2e9", "only the legality pair survives the quality-only filters"
+
+
 def test_build_quality_pairs_thresholds_and_skips_missing_analysis() -> None:
     records = [
         _blunder_record(event_id=0, cpl=300),

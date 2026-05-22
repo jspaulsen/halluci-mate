@@ -68,12 +68,6 @@ def runs_for(runs: Iterable[RunEntry], checkpoint: str, evaluator: Evaluator) ->
     return sorted(matches, key=lambda r: r.timestamp, reverse=True)
 
 
-def latest_run_for(runs: Iterable[RunEntry], checkpoint: str, evaluator: Evaluator) -> RunEntry | None:
-    """Return the most recent run (by run-id timestamp) for the given pair, or None."""
-    ordered = runs_for(runs, checkpoint, evaluator)
-    return ordered[0] if ordered else None
-
-
 def load_or_compute_metrics(entry: RunEntry) -> dict[str, Any]:
     """Return metrics for ``entry`` — read ``metrics.json`` if present, else recompute.
 
@@ -88,6 +82,79 @@ def load_or_compute_metrics(entry: RunEntry) -> dict[str, Any]:
         return reader.read_metrics()
     config = reader.read_config()
     return compute_all(reader.read_records(), config)
+
+
+def headline_metrics(evaluator: Evaluator, metrics: dict[str, Any]) -> dict[str, float]:
+    """Flatten an evaluator's nested ``metrics.json`` payload to scalar headlines.
+
+    Owns the mapping from ``compute_all``'s on-disk schema to the flat
+    ``{name: value}`` rows the comparison UI renders. Living here (not in the
+    Streamlit layer) keeps it unit-testable and means schema drift fails a test
+    rather than degrading to blank rows.
+
+    Anything missing in ``metrics`` (e.g. CPL when ``--sf-analyze`` was off) is
+    omitted rather than zero-filled — leaving the row blank is more honest than
+    implying "the model scored 0". Evaluators with no headline mapping (e.g.
+    ``PUZZLES``) return ``{}``.
+    """
+    if not metrics:
+        return {}
+    if evaluator is Evaluator.VS_STOCKFISH:
+        return _vs_stockfish_headlines(metrics)
+    if evaluator is Evaluator.LEGAL_RATE:
+        overall = metrics.get("legal_rate", {}).get("overall", {})
+        return _filter_numeric({"legal_rate": overall.get("rate"), "n": overall.get("n"), "legal": overall.get("legal")})
+    if evaluator is Evaluator.PERPLEXITY:
+        return _filter_numeric(
+            {
+                "perplexity": metrics.get("perplexity"),
+                "mean_nll": metrics.get("mean_nll"),
+                "bits_per_token": metrics.get("bits_per_token"),
+                "num_tokens": metrics.get("num_tokens"),
+                "num_sequences": metrics.get("num_sequences"),
+            }
+        )
+    return {}
+
+
+def _vs_stockfish_headlines(metrics: dict[str, Any]) -> dict[str, float]:
+    win_overall = metrics.get("win_rate", {}).get("overall", {})
+    legal_overall = metrics.get("legal_rate", {}).get("overall", {})
+    cpl_overall = metrics.get("centipawn_loss", {}).get("overall", {})
+    blunder = metrics.get("blunder_rate", {})
+    blunder_overall = blunder.get("overall", {})
+    blunder_no_rep = blunder.get("excluding_repetition", {}).get("overall", {})
+    blunder_ctx = blunder.get("by_position_context", {})
+    tactical = metrics.get("tactical_oversight_rate", {})
+    tactical_overall = tactical.get("overall", {})
+    tactical_ctx = tactical.get("by_position_context", {})
+    return _filter_numeric(
+        {
+            "win_rate": win_overall.get("win_rate"),
+            "score_rate": win_overall.get("score_rate"),
+            "wins": win_overall.get("wins"),
+            "draws": win_overall.get("draws"),
+            "losses": win_overall.get("losses"),
+            "unfinished": win_overall.get("unfinished"),
+            "legal_rate": legal_overall.get("rate"),
+            "cpl_mean": cpl_overall.get("mean"),
+            "cpl_median": cpl_overall.get("median"),
+            "cpl_p95": cpl_overall.get("p95"),
+            "blunder_rate": blunder_overall.get("rate"),
+            "blunder_rate_no_rep": blunder_no_rep.get("rate"),
+            "blunder_consequential": blunder_ctx.get("consequential", {}).get("rate"),
+            "blunder_in_lost": blunder_ctx.get("in_lost_position", {}).get("rate"),
+            "tactical_oversight": tactical_overall.get("rate"),
+            "tactical_oversight_consequential": tactical_ctx.get("consequential", {}).get("rate"),
+            "tactical_oversight_in_lost": tactical_ctx.get("in_lost_position", {}).get("rate"),
+        }
+    )
+
+
+def _filter_numeric(values: dict[str, Any]) -> dict[str, float]:
+    # ``bool`` is an ``int`` subclass; a stray ``True``/``False`` in the payload
+    # would otherwise render as ``1.0``/``0.0`` in the headline table.
+    return {k: float(v) for k, v in values.items() if isinstance(v, (int, float)) and not isinstance(v, bool)}
 
 
 def _try_load_entry(run_dir: Path) -> RunEntry | None:
