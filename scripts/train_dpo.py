@@ -8,7 +8,7 @@ perspective token (``<WHITE>`` or ``<BLACK>``), exactly matching the format
 produced by ``Game.tokenize`` at inference time.
 
 DPO hyperparams shifted from finetune.py:
-- LR 5e-7 (60x lower than the fine-tune) — DPO is sensitive to large updates;
+- LR 1e-5 (3x lower than the fine-tune) — DPO is sensitive to large updates;
   the reference model anchors the policy and a higher LR collapses the KL.
 - beta 0.1 (TRL default) — KL strength.
 - Single move completion → max_length stays small (~256 tokens covers any
@@ -78,6 +78,40 @@ def _load_pairs(path: Path) -> Dataset:
     return Dataset.from_dict({"prompt": prompts, "chosen": chosen, "rejected": rejected})
 
 
+def _load_base_model(base_model: str) -> AutoModelForCausalLM:
+    """Load a chess checkpoint for DPO — the policy and the frozen reference both use this.
+
+    ``from_pretrained`` (not ``from_config``) is correct here: DPO continues
+    from an already-trained chess model, it is not from-scratch training.
+    """
+    return AutoModelForCausalLM.from_pretrained(
+        base_model,
+        attn_implementation="flash_attention_2",
+        dtype=torch.bfloat16,
+    )
+
+
+def _start_run(state: PartialState, params: dict[str, object]) -> str:
+    """Open the MLflow run on the main process and broadcast its name to every rank.
+
+    Returns the run name (``"unknown"`` if MLflow assigned none) so all
+    processes namespace the per-run output directory identically.
+    """
+    name_list: list[str | None] = [None]
+    if state.is_main_process:
+        mlflow.set_experiment("halluci-mate-v2b-dpo")
+        mlflow.start_run()
+        mlflow.log_params(params)
+        active_run = mlflow.active_run()
+        if not active_run:
+            raise RuntimeError("MLflow run failed to start")
+        name_list[0] = active_run.info.run_name
+
+    state.wait_for_everyone()
+    name_list = broadcast_object_list(name_list, from_process=0)
+    return name_list[0] if name_list[0] is not None else "unknown"
+
+
 def main(
     pairs_path: Path = Path("dpo/v2b-consequential.jsonl"),
     output_directory: Path = Path("runs-v2b-dpo"),
@@ -102,48 +136,28 @@ def main(
     else:
         train_dataset, eval_dataset = dataset, None
 
-    model = AutoModelForCausalLM.from_pretrained(
-        base_model,
-        attn_implementation="flash_attention_2",
-        dtype=torch.bfloat16,
-    )
-    ref_model = AutoModelForCausalLM.from_pretrained(
-        base_model,
-        attn_implementation="flash_attention_2",
-        dtype=torch.bfloat16,
-    )
+    model = _load_base_model(base_model)
+    ref_model = _load_base_model(base_model)
 
     state = PartialState()
-    name_list: list[str | None] = [None]
-
-    if state.is_main_process:
-        mlflow.set_experiment("halluci-mate-v2b-dpo")
-        mlflow.start_run()
-        mlflow.log_params(
-            {
-                "base_model": base_model,
-                "pairs_path": str(pairs_path),
-                "beta": beta,
-                "learning_rate": learning_rate,
-                "epochs": epochs,
-                "per_device_batch_size": per_device_batch_size,
-                "grad_accum_steps": gradient_accumulation_steps,
-                "warmup_ratio": warmup_ratio,
-                "weight_decay": weight_decay,
-                "max_length": max_length,
-                "lr_scheduler_type": "cosine",
-                "n_pairs": len(dataset),
-                "seed": seed,
-            }
-        )
-        active_run = mlflow.active_run()
-        if not active_run:
-            raise RuntimeError("MLflow run failed to start")
-        name_list[0] = active_run.info.run_name
-
-    state.wait_for_everyone()
-    name_list = broadcast_object_list(name_list, from_process=0)
-    name = name_list[0] if name_list[0] is not None else "unknown"
+    name = _start_run(
+        state,
+        {
+            "base_model": base_model,
+            "pairs_path": str(pairs_path),
+            "beta": beta,
+            "learning_rate": learning_rate,
+            "epochs": epochs,
+            "per_device_batch_size": per_device_batch_size,
+            "grad_accum_steps": gradient_accumulation_steps,
+            "warmup_ratio": warmup_ratio,
+            "weight_decay": weight_decay,
+            "max_length": max_length,
+            "lr_scheduler_type": "cosine",
+            "n_pairs": len(dataset),
+            "seed": seed,
+        },
+    )
 
     output_directory = output_directory / name
     output_directory.mkdir(parents=True, exist_ok=True)

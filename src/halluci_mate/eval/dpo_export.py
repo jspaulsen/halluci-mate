@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, ConfigDict
 
 from halluci_mate.eval.metrics import LOST_POSITION_THRESHOLD_CP, drop_repetition_moves, is_consequential
-from halluci_mate.eval.records import PerMoveRecord, Side
+from halluci_mate.eval.records import PerMoveRecord
 from halluci_mate.eval.runs import RunReader
 
 if TYPE_CHECKING:
@@ -112,11 +112,6 @@ def _build_history_index(records: Iterable[PerMoveRecord]) -> dict[int, list[str
     return index
 
 
-def _side_value(side: Side | str) -> str:
-    """Normalize a ``Side`` enum or its string form to its ``str`` value."""
-    return side.value if isinstance(side, Side) else side
-
-
 def build_legality_pairs(records: Iterable[PerMoveRecord]) -> Iterator[DpoPair]:
     """Yield one pair per record where masking rescued an illegal raw sample.
 
@@ -133,7 +128,7 @@ def build_legality_pairs(records: Iterable[PerMoveRecord]) -> Iterator[DpoPair]:
             yield DpoPair(
                 prompt=record.fen_before,
                 moves_uci=history_index[record.event_id],
-                model_side=_side_value(record.model_side),
+                model_side=record.model_side,
                 chosen=record.model_move,
                 rejected=record.raw_sample_move,
             )
@@ -185,7 +180,7 @@ def build_quality_pairs(
         yield DpoPair(
             prompt=record.fen_before,
             moves_uci=history_index[record.event_id],
-            model_side=_side_value(record.model_side),
+            model_side=record.model_side,
             chosen=record.sf_best_move,
             rejected=record.model_move,
         )
