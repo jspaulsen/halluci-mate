@@ -24,7 +24,7 @@ from halluci_mate.game import Game, Perspective
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from halluci_mate.inference import Predictor
+    from halluci_mate.inference import MovePrediction, Predictor
 
 # Stockfish "Skill Level" UCI option range.
 STOCKFISH_SKILL_MIN = 0
@@ -114,6 +114,17 @@ class _GameState:
     pgn_node: chess.pgn.GameNode
     prior_opponent_move: str | None = None
     termination: Termination = "natural"
+
+
+@dataclass(frozen=True)
+class _SfAnalysis:
+    """Stockfish-derived per-move fields; all ``None`` when ``--sf-analyze`` is off."""
+
+    sf_best_move: str | None = None
+    eval_before_white: int | None = None
+    eval_after_white: int | None = None
+    centipawn_loss: int | None = None
+    is_blunder: bool | None = None
 
 
 def run_vs_stockfish(
@@ -294,8 +305,6 @@ def _handle_model_turn(
     legal_uci_before = [move.uci() for move in board.legal_moves]
 
     before_info = stockfish.analyse(board, stockfish_limit) if config.analyze else None
-    sf_best_move = _pv_first_move_uci(before_info) if before_info is not None else None
-    eval_before_white = _white_relative_cp(before_info) if before_info is not None else None
 
     prediction = engine.predict_with_metadata(
         state.game,
@@ -303,19 +312,87 @@ def _handle_model_turn(
         record_top_k=config.record_top_k,
     )
 
-    eval_after_white: int | None = None
-    centipawn_loss: int | None = None
-    is_blunder: bool | None = None
-    if eval_before_white is not None and prediction.played_move is not None:
-        # Analyse the resulting position on a board copy so move application
-        # stays at the bottom of the function alongside the non-analyze path.
-        after_board = board.copy(stack=False)
-        after_board.push(prediction.played_move)
-        eval_after_white = _white_relative_cp(stockfish.analyse(after_board, stockfish_limit))
-        centipawn_loss = _centipawn_loss_stm(eval_before_white, eval_after_white, mover_color)
-        is_blunder = centipawn_loss > config.blunder_threshold_cp
+    analysis = _build_sf_analysis(
+        before_info=before_info,
+        played_move=prediction.played_move,
+        board=board,
+        stockfish=stockfish,
+        stockfish_limit=stockfish_limit,
+        mover_color=mover_color,
+        blunder_threshold_cp=config.blunder_threshold_cp,
+    )
 
-    record = PerMoveRecord(
+    writer.append_record(
+        _build_per_move_record(
+            run_id=run_id,
+            event_id=event_id,
+            checkpoint=checkpoint,
+            game_id=game_id,
+            ply=ply,
+            mover_color=mover_color,
+            model_side=model_side,
+            fen_before=fen_before,
+            legal_uci_before=legal_uci_before,
+            prediction=prediction,
+            prior_opponent_move=state.prior_opponent_move,
+            analysis=analysis,
+        )
+    )
+
+    if prediction.played_move is None:
+        state.termination = "illegal-move"
+        return
+
+    _apply_move(state, prediction.played_move)
+
+
+def _build_sf_analysis(
+    *,
+    before_info: chess.engine.InfoDict | None,
+    played_move: chess.Move | None,
+    board: chess.Board,
+    stockfish: _StockfishEngine,
+    stockfish_limit: chess.engine.Limit,
+    mover_color: chess.Color,
+    blunder_threshold_cp: int,
+) -> _SfAnalysis:
+    if before_info is None:
+        return _SfAnalysis()
+    eval_before_white = _white_relative_cp(before_info)
+    sf_best_move = _pv_first_move_uci(before_info)
+    if played_move is None:
+        return _SfAnalysis(sf_best_move=sf_best_move, eval_before_white=eval_before_white)
+    # Analyse the resulting position on a board copy so the live board is only
+    # mutated by `_apply_move` after the record is written.
+    after_board = board.copy(stack=False)
+    after_board.push(played_move)
+    eval_after_white = _white_relative_cp(stockfish.analyse(after_board, stockfish_limit))
+    centipawn_loss = _centipawn_loss_stm(eval_before_white, eval_after_white, mover_color)
+    return _SfAnalysis(
+        sf_best_move=sf_best_move,
+        eval_before_white=eval_before_white,
+        eval_after_white=eval_after_white,
+        centipawn_loss=centipawn_loss,
+        is_blunder=centipawn_loss > blunder_threshold_cp,
+    )
+
+
+def _build_per_move_record(
+    *,
+    run_id: str,
+    event_id: int,
+    checkpoint: str,
+    game_id: str,
+    ply: int,
+    mover_color: chess.Color,
+    model_side: Side,
+    fen_before: str,
+    legal_uci_before: list[str],
+    prediction: MovePrediction,
+    prior_opponent_move: str | None,
+    analysis: _SfAnalysis,
+) -> PerMoveRecord:
+    return PerMoveRecord(
         run_id=run_id,
         event_id=event_id,
         evaluator=Evaluator.VS_STOCKFISH,
@@ -332,20 +409,13 @@ def _handle_model_turn(
         mask_used=prediction.mask_used,
         raw_sample_move=prediction.raw_sample_move_uci,
         raw_sample_legal=prediction.raw_sample_legal,
-        prior_opponent_move=state.prior_opponent_move,
-        sf_best_move=sf_best_move,
-        sf_eval_before_cp=eval_before_white,
-        sf_eval_after_cp=eval_after_white,
-        centipawn_loss=centipawn_loss,
-        is_blunder=is_blunder,
+        prior_opponent_move=prior_opponent_move,
+        sf_best_move=analysis.sf_best_move,
+        sf_eval_before_cp=analysis.eval_before_white,
+        sf_eval_after_cp=analysis.eval_after_white,
+        centipawn_loss=analysis.centipawn_loss,
+        is_blunder=analysis.is_blunder,
     )
-    writer.append_record(record)
-
-    if prediction.played_move is None:
-        state.termination = "illegal-move"
-        return
-
-    _apply_move(state, prediction.played_move)
 
 
 def _apply_move(state: _GameState, move: chess.Move) -> None:
@@ -387,7 +457,11 @@ def _white_relative_cp(info: chess.engine.InfoDict) -> int:
     Mate scores serialize as `int | None` in the record schema, so they have
     to collapse to a finite int here. See `_MATE_SCORE_CP`.
     """
-    score = info["score"].white().score(mate_score=_MATE_SCORE_CP)
+    # `score` is `NotRequired` on `InfoDict`; callers only pass `analyse(...)`
+    # results, where it is always present.
+    score_info = info.get("score")
+    assert score_info is not None, "Stockfish analyse() returned no score"
+    score = score_info.white().score(mate_score=_MATE_SCORE_CP)
     # `score(mate_score=...)` only returns `None` for `MateGiven`, which
     # Stockfish never emits on a non-terminal position. Be defensive.
     assert score is not None
