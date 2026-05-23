@@ -554,8 +554,7 @@ def test_search_predictor_drives_a_run(tmp_path: Path) -> None:
     )
 
     assert len(outcomes) == 1
-    records = RunReader(run_dir).read_records()
-    move_records = [r for r in records if isinstance(r, PerMoveRecord)]
+    move_records = _read_records(run_dir)
     assert move_records  # at least one model decision was recorded
     # Every recorded model move is legal in the position it was played from.
     for record in move_records:
