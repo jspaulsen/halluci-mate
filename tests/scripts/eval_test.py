@@ -467,3 +467,36 @@ def test_report_recovers_from_corrupt_metrics(tmp_path: Path) -> None:
 
     metrics = json.loads((run_dir / METRICS_FILENAME).read_text(encoding="utf-8"))
     assert metrics["evaluator"] == Evaluator.VS_STOCKFISH.value
+
+
+def test_vs_stockfish_search_records_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`--search` wraps the engine and records the search parameters in config.json."""
+    stockfish = _StubStockfish()
+    _patch_engines(monkeypatch, stockfish)
+    evals_dir = tmp_path / "evals"
+
+    eval_cli.main(
+        [
+            "vs-stockfish",
+            "--checkpoint",
+            "stub-ckpt",
+            "--games",
+            "1",
+            "--max-plies",
+            "4",
+            "--halluci-color",
+            "white",
+            "--evals-dir",
+            str(evals_dir),
+            "--search",
+            "--search-k",
+            "4",
+        ]
+    )
+
+    run_dirs = [p for p in evals_dir.iterdir() if p.is_dir()]
+    assert len(run_dirs) == 1
+    config = json.loads((run_dirs[0] / CONFIG_FILENAME).read_text(encoding="utf-8"))
+    assert config["search"] is True
+    assert config["search_k"] == 4
+    assert config["search_leaf"] == "material"

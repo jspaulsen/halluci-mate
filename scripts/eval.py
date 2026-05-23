@@ -42,7 +42,9 @@ from halluci_mate.eval.evaluators.vs_stockfish import (
 from halluci_mate.eval.metrics import compute_all
 from halluci_mate.eval.records import Evaluator
 from halluci_mate.eval.runs import RunReader, RunWriter, make_run_id, resolve_checkpoint_tag
-from halluci_mate.inference import ChessInferenceEngine
+from halluci_mate.inference import ChessInferenceEngine, Predictor
+from halluci_mate.search.leaf import MaterialEvaluator
+from halluci_mate.search.predictor import SearchPredictor
 
 DEFAULT_EVALS_DIR = Path("evals")
 
@@ -94,6 +96,8 @@ def vs_stockfish_cmd(
         ),
     ] = False,
     blunder_threshold_cp: Annotated[int, typer.Option(help="Centipawn loss threshold for is_blunder. Only meaningful when --sf-analyze is set.")] = 200,
+    search: Annotated[bool, typer.Option("--search/--no-search", help="Wrap the model in depth-2 minimax search over its top-K (material leaf eval).")] = False,
+    search_k: Annotated[int, typer.Option(help="Number of top-K candidates search considers per move (default: 3). Only used with --search.")] = 3,
 ) -> None:
     config = VsStockfishConfig(
         games=games,
@@ -122,10 +126,15 @@ def vs_stockfish_cmd(
     # effective values so the on-disk record can't desync from what was used.
     extra_config: dict[str, object] = {"temperature": engine.temperature, "top_k": engine.top_k}
 
+    predictor: Predictor = engine
+    if search:
+        predictor = SearchPredictor(policy=engine, leaf=MaterialEvaluator(), k=search_k)
+        extra_config.update({"search": True, "search_k": search_k, "search_leaf": "material"})
+
     sf_engine = chess.engine.SimpleEngine.popen_uci(stockfish)
     try:
         outcomes = run_vs_stockfish(
-            engine=engine,
+            engine=predictor,
             stockfish=sf_engine,
             config=config,
             run_dir=run_dir,
