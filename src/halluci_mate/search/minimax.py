@@ -3,8 +3,8 @@
 For each of the policy's top-K candidate moves, ``run_search`` asks the policy
 for the opponent's top-K replies, scores each resulting leaf with a
 ``LeafEvaluator``, takes the opponent's worst-for-us reply (min), and finally
-the best candidate (argmax). Leaf scoring is board-only, so the cost is
-``1 + k`` forwards. See
+the best candidate (argmax). Leaf scoring is board-only, so the cost is up to
+``1 + k`` forwards (a candidate that ends the game skips its reply pass). See
 ``docs/superpowers/specs/2026-05-23-inference-search-design.md``.
 """
 

@@ -52,4 +52,6 @@ class ScriptedPolicy:
 
     def predict(self, game: Game, constrained: bool | None = None) -> chess.Move:
         del constrained
+        # run_search only uses predict_with_metadata; this exists to satisfy the
+        # Predictor protocol and is not script-driven.
         return next(iter(game.board.legal_moves))
