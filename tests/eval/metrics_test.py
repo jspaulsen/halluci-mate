@@ -12,10 +12,14 @@ import math
 import pytest
 
 from halluci_mate.eval.metrics import (
+    BlunderBucket,
+    CplBucket,
     LegalRateBucket,
     WinRateBucket,
     WinRateStats,
     compute_all,
+    compute_blunder_rate,
+    compute_centipawn_loss,
     compute_legal_rate,
     compute_win_rate,
 )
@@ -249,3 +253,89 @@ def test_legal_rate_bucket_rate_is_zero_when_empty() -> None:
     """Pinning the empty-bucket convention so it is not silently changed."""
     bucket = LegalRateBucket(n=0, legal=0, rate=0.0)
     assert bucket.rate == 0.0
+
+
+def test_compute_centipawn_loss_overall_and_by_phase() -> None:
+    moves = [
+        _move(0, phase=Phase.OPENING, centipawn_loss=10, is_blunder=False),
+        _move(1, phase=Phase.OPENING, centipawn_loss=20, is_blunder=False),
+        _move(2, phase=Phase.MIDDLE, centipawn_loss=300, is_blunder=True),
+        _move(3, phase=Phase.MIDDLE, centipawn_loss=500, is_blunder=True),
+        _move(4, phase=Phase.ENDGAME, centipawn_loss=50, is_blunder=False),
+    ]
+    stats = compute_centipawn_loss(moves)
+    assert stats.overall.n == 5
+    assert stats.overall.mean == pytest.approx((10 + 20 + 300 + 500 + 50) / 5)
+    assert stats.overall.median == pytest.approx(50.0)
+    assert stats.by_phase["opening"].n == 2
+    assert stats.by_phase["opening"].mean == pytest.approx(15.0)
+    assert stats.by_phase["middle"].n == 2
+    assert stats.by_phase["middle"].mean == pytest.approx(400.0)
+    assert stats.by_phase["endgame"].n == 1
+    # n=1 collapse: p95 == the sole sample (statistics.quantiles needs >=2).
+    assert stats.by_phase["endgame"].p95 == pytest.approx(50.0)
+
+
+def test_compute_centipawn_loss_skips_none_records() -> None:
+    moves = [
+        _move(0, centipawn_loss=None, is_blunder=None),
+        _move(1, centipawn_loss=100, is_blunder=False),
+    ]
+    stats = compute_centipawn_loss(moves)
+    assert stats.overall.n == 1
+    assert stats.overall.mean == pytest.approx(100.0)
+
+
+def test_compute_centipawn_loss_empty_returns_zero_buckets() -> None:
+    stats = compute_centipawn_loss([])
+    zero = CplBucket(n=0, mean=0.0, median=0.0, p95=0.0)
+    assert stats.overall == zero
+    assert stats.by_phase == {phase.value: zero for phase in Phase}
+
+
+def test_compute_blunder_rate_overall_and_by_phase() -> None:
+    moves = [
+        _move(0, phase=Phase.OPENING, centipawn_loss=10, is_blunder=False),
+        _move(1, phase=Phase.OPENING, centipawn_loss=300, is_blunder=True),
+        _move(2, phase=Phase.MIDDLE, centipawn_loss=500, is_blunder=True),
+        _move(3, phase=Phase.MIDDLE, centipawn_loss=50, is_blunder=False),
+    ]
+    stats = compute_blunder_rate(moves)
+    assert stats.overall == BlunderBucket(n=4, blunders=2, rate=0.5)
+    assert stats.by_phase["opening"] == BlunderBucket(n=2, blunders=1, rate=0.5)
+    assert stats.by_phase["middle"] == BlunderBucket(n=2, blunders=1, rate=0.5)
+    assert stats.by_phase["endgame"] == BlunderBucket(n=0, blunders=0, rate=0.0)
+
+
+def test_compute_blunder_rate_empty_returns_zero_buckets() -> None:
+    stats = compute_blunder_rate([])
+    zero = BlunderBucket(n=0, blunders=0, rate=0.0)
+    assert stats.overall == zero
+    assert stats.by_phase == {phase.value: zero for phase in Phase}
+
+
+def test_compute_all_vs_stockfish_emits_cpl_and_blunder_when_present() -> None:
+    """`--sf-analyze`-on records make the two new top-level keys appear."""
+    records: list[Record] = [
+        _move(0, centipawn_loss=10, is_blunder=False),
+        _move(1, centipawn_loss=400, is_blunder=True),
+        _game(2, result="1-0"),
+    ]
+    metrics = compute_all(records, DEFAULT_CONFIG)
+    assert "centipawn_loss" in metrics
+    assert "blunder_rate" in metrics
+    assert metrics["centipawn_loss"]["overall"]["n"] == 2
+    assert metrics["blunder_rate"]["overall"] == {"n": 2, "blunders": 1, "rate": pytest.approx(0.5)}
+
+
+def test_compute_all_vs_stockfish_omits_cpl_and_blunder_when_absent() -> None:
+    """`--sf-analyze`-off runs (all-None sf fields) must not emit the new blocks.
+
+    Pinned so `metrics.json` diffs between analyze-on and analyze-off runs
+    stay structurally honest — an all-zeros block would falsely suggest the
+    analysis ran.
+    """
+    records: list[Record] = [_move(0), _game(1, result="1-0")]
+    metrics = compute_all(records, DEFAULT_CONFIG)
+    assert "centipawn_loss" not in metrics
+    assert "blunder_rate" not in metrics

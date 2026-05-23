@@ -80,7 +80,19 @@ def vs_stockfish_cmd(
     top_k: Annotated[int, typer.Option(help="Top-k sampling cutoff (0 = disabled).")] = 0,
     unconstrained: Annotated[bool, typer.Option("--unconstrained", help="Disable legal-move masking for halluci-mate.")] = False,
     record_top_k: Annotated[int, typer.Option(help="K for the top-K candidates captured per record (0 = skip).")] = 5,
-    blunder_threshold_cp: Annotated[int, typer.Option(help="Centipawn loss threshold for is_blunder.")] = 200,
+    sf_analyze: Annotated[
+        bool,
+        typer.Option(
+            "--sf-analyze",
+            help=(
+                "Run Stockfish analysis on every position the model moves from (and the resulting position) "
+                "to populate sf_best_move / sf_eval_*_cp / centipawn_loss / is_blunder. "
+                "Off by default: adds two Stockfish queries per model decision and roughly triples wall time. "
+                "Analysis reuses --stockfish-depth / --stockfish-movetime, so raise those for a meaningful CPL signal."
+            ),
+        ),
+    ] = False,
+    blunder_threshold_cp: Annotated[int, typer.Option(help="Centipawn loss threshold for is_blunder. Only meaningful when --sf-analyze is set.")] = 200,
 ) -> None:
     config = VsStockfishConfig(
         games=games,
@@ -91,6 +103,7 @@ def vs_stockfish_cmd(
         max_plies=max_plies,
         unconstrained=unconstrained,
         record_top_k=record_top_k,
+        analyze=sf_analyze,
         blunder_threshold_cp=blunder_threshold_cp,
     )
 

@@ -86,10 +86,16 @@ class _StubEngine:
 
 
 class _StubStockfish:
-    """Stand-in for ``chess.engine.SimpleEngine``. Plays the last legal move."""
+    """Stand-in for ``chess.engine.SimpleEngine``. Plays the last legal move.
 
-    def __init__(self) -> None:
+    `analyse` returns a fixed `Cp(0)` score; the CLI tests that exercise the
+    `--sf-analyze` path drive specific CPL values from a scripted sequence in
+    `analyse_scores` (popped front-to-back per call).
+    """
+
+    def __init__(self, analyse_scores: list[chess.engine.Score] | None = None) -> None:
         self.quit_called = False
+        self._analyse_scores = list(analyse_scores) if analyse_scores is not None else []
 
     def configure(self, options: dict[str, Any]) -> None:
         del options
@@ -97,6 +103,15 @@ class _StubStockfish:
     def play(self, board: chess.Board, limit: chess.engine.Limit) -> chess.engine.PlayResult:
         del limit
         return chess.engine.PlayResult(move=list(board.legal_moves)[-1], ponder=None)
+
+    def analyse(self, board: chess.Board, limit: chess.engine.Limit) -> chess.engine.InfoDict:
+        del limit
+        score = self._analyse_scores.pop(0) if self._analyse_scores else chess.engine.Cp(0)
+        first_move = next(iter(board.legal_moves), None)
+        info: chess.engine.InfoDict = {"score": chess.engine.PovScore(score, chess.WHITE)}
+        if first_move is not None:
+            info["pv"] = [first_move]
+        return info
 
     def quit(self) -> None:
         self.quit_called = True
@@ -162,6 +177,45 @@ def test_vs_stockfish_smoke_writes_metrics_json(tmp_path: Path, monkeypatch: pyt
     assert metrics["win_rate"]["overall"]["games"] == 1
     assert "by_phase" in metrics["legal_rate"]
     assert "by_model_side" in metrics["legal_rate"]
+
+
+def test_vs_stockfish_smoke_sf_analyze_emits_cpl_and_blunder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`--sf-analyze` populates per-record sf fields and the two new metrics blocks."""
+    stockfish = _StubStockfish(
+        analyse_scores=[
+            chess.engine.Cp(40),  # before model move
+            chess.engine.Cp(-260),  # after model move → CPL=300 (white-pov mover)
+        ],
+    )
+    _patch_engines(monkeypatch, stockfish)
+    evals_dir = tmp_path / "evals"
+
+    eval_cli.main(
+        [
+            "vs-stockfish",
+            "--checkpoint",
+            "stub-ckpt",
+            "--games",
+            "1",
+            "--max-plies",
+            "2",
+            "--halluci-color",
+            "white",
+            "--evals-dir",
+            str(evals_dir),
+            "--sf-analyze",
+            "--blunder-threshold-cp",
+            "200",
+        ]
+    )
+
+    run_dir = next(p for p in evals_dir.iterdir() if p.is_dir())
+    metrics = json.loads((run_dir / METRICS_FILENAME).read_text(encoding="utf-8"))
+    assert "centipawn_loss" in metrics
+    assert "blunder_rate" in metrics
+    assert metrics["centipawn_loss"]["overall"]["n"] == 1
+    assert metrics["centipawn_loss"]["overall"]["mean"] == pytest.approx(300.0)
+    assert metrics["blunder_rate"]["overall"]["blunders"] == 1
 
 
 def test_report_recomputes_metrics_without_touching_records(tmp_path: Path) -> None:
