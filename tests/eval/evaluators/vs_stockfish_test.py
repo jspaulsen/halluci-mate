@@ -25,6 +25,8 @@ from halluci_mate.eval.evaluators.vs_stockfish import (
 from halluci_mate.eval.records import Evaluator, PerGameRecord, PerMoveRecord, Phase, Side, TopKEntry
 from halluci_mate.eval.runs import CONFIG_FILENAME, GAMES_PGN_FILENAME, RECORDS_FILENAME, RunReader
 from halluci_mate.inference import MovePrediction
+from halluci_mate.search.leaf import MaterialEvaluator
+from halluci_mate.search.predictor import SearchPredictor
 from tests.helpers.eval_records import DEFAULT_CHECKPOINT, DEFAULT_RUN_ID
 
 if TYPE_CHECKING:
@@ -534,3 +536,28 @@ def test_outcome_dataclass_shape() -> None:
         pgn='[Event "x"]\n\n1. e4 *\n',
     )
     assert outcome.game_id == "game-0000"
+
+
+def test_search_predictor_drives_a_run(tmp_path: Path) -> None:
+    """SearchPredictor is a drop-in Predictor: a full run completes and writes records."""
+    run_dir = tmp_path / "run"
+    config = VsStockfishConfig(games=1, max_plies=6, halluci_color="white")
+    predictor = SearchPredictor(policy=_StubEngine(), leaf=MaterialEvaluator(), k=3)
+
+    outcomes = run_vs_stockfish(
+        engine=predictor,
+        stockfish=_StubStockfish(),
+        config=config,
+        run_dir=run_dir,
+        run_id=DEFAULT_RUN_ID,
+        checkpoint=DEFAULT_CHECKPOINT,
+    )
+
+    assert len(outcomes) == 1
+    records = RunReader(run_dir).read_records()
+    move_records = [r for r in records if isinstance(r, PerMoveRecord)]
+    assert move_records  # at least one model decision was recorded
+    # Every recorded model move is legal in the position it was played from.
+    for record in move_records:
+        board = chess.Board(record.fen_before)
+        assert chess.Move.from_uci(record.model_move) in board.legal_moves
