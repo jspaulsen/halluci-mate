@@ -38,6 +38,7 @@ def test_stalemate_is_zero() -> None:
     board = chess.Board("k7/8/1Q6/8/8/8/8/7K b - - 0 1")
     assert board.is_stalemate()
     assert evaluator.evaluate(board, pov=chess.WHITE) == 0.0
+    assert evaluator.evaluate(board, pov=chess.BLACK) == 0.0
 
 
 def test_insufficient_material_is_zero() -> None:
@@ -45,3 +46,4 @@ def test_insufficient_material_is_zero() -> None:
     board = chess.Board("8/8/8/4k3/8/8/4K3/8 w - - 0 1")  # K vs K
     assert board.is_insufficient_material()
     assert evaluator.evaluate(board, pov=chess.WHITE) == 0.0
+    assert evaluator.evaluate(board, pov=chess.BLACK) == 0.0

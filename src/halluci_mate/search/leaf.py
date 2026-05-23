@@ -11,14 +11,14 @@ from typing import Protocol
 
 import chess
 
-# Classic piece weights; the king carries no material value.
+# Classic piece weights. Kings are omitted: they have no material value and are
+# always present, so including them would only add a constant 0 to the sum.
 PIECE_VALUES: dict[chess.PieceType, float] = {
     chess.PAWN: 1.0,
     chess.KNIGHT: 3.0,
     chess.BISHOP: 3.0,
     chess.ROOK: 5.0,
     chess.QUEEN: 9.0,
-    chess.KING: 0.0,
 }
 
 # Finite sentinel for a decisive (checkmate) leaf: large enough to dominate any
