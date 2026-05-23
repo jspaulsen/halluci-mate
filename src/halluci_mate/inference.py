@@ -70,6 +70,10 @@ class Predictor(Protocol):
         record_top_k: int = 5,
     ) -> MovePrediction: ...
 
+    def predict(self, game: Game, constrained: bool | None = None) -> chess.Move:
+        """Return a legal move, or raise ``IllegalMoveError`` (unconstrained illegal sample)."""
+        ...
+
 
 class ChessInferenceEngine:
     """Generate moves from a trained chess LLM checkpoint.

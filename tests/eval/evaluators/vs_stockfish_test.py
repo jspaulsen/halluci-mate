@@ -58,6 +58,10 @@ class _StubEngine:
             mask_used=self._mask_used,
         )
 
+    def predict(self, game: Game, constrained: bool | None = None) -> chess.Move:
+        del constrained
+        return list(game.board.legal_moves)[0]
+
 
 class _StubStockfish:
     """Plays the last legal move (so Stockfish picks something other than the model's first-move stub)."""
@@ -269,6 +273,10 @@ def test_terminates_on_illegal_move(tmp_path: Path) -> None:
                 model_top_k=[],
                 mask_used=False,
             )
+
+        def predict(self, game: Game, constrained: bool | None = None) -> chess.Move:
+            del constrained
+            return next(iter(game.board.legal_moves))
 
     outcomes = run_vs_stockfish(
         engine=_IllegalEngine(),
@@ -487,6 +495,10 @@ def test_analyze_on_illegal_move_only_fills_before_fields(tmp_path: Path) -> Non
                 model_top_k=[],
                 mask_used=False,
             )
+
+        def predict(self, game: Game, constrained: bool | None = None) -> chess.Move:
+            del constrained
+            return next(iter(game.board.legal_moves))
 
     stockfish = _AnalyzingStubStockfish(scores=[(chess.engine.Cp(25), "e2e4")])
 

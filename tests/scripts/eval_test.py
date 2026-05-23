@@ -84,6 +84,10 @@ class _StubEngine:
             mask_used=masked,
         )
 
+    def predict(self, game: Game, constrained: bool | None = None) -> chess.Move:
+        del constrained
+        return next(iter(game.board.legal_moves))
+
 
 class _StubStockfish:
     """Stand-in for ``chess.engine.SimpleEngine``. Plays the last legal move.
