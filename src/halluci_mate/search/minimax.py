@@ -79,12 +79,7 @@ def _min_reply_score(board_after: chess.Board, reply_moves: list[chess.Move], le
 
 def _legal_candidates(top_k: list[TopKEntry], board: chess.Board) -> list[tuple[chess.Move, float]]:
     """Parse top-K UCI entries to legal moves, dropping any that don't apply."""
-    candidates: list[tuple[chess.Move, float]] = []
-    for entry in top_k:
-        move = _parse_legal(entry.move, board)
-        if move is not None:
-            candidates.append((move, entry.logprob))
-    return candidates
+    return [(move, entry.logprob) for entry in top_k if (move := _parse_legal(entry.move, board)) is not None]
 
 
 def _parse_legal(uci: str, board: chess.Board) -> chess.Move | None:
