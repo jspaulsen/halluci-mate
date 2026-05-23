@@ -46,7 +46,7 @@ def test_avoids_hanging_a_piece_via_opponent_min() -> None:
     policy = ScriptedPolicy(
         {
             _TRAP_ROOT_KEY: [("d1d5", -0.1), ("d1d2", -0.5)],  # policy greedily prefers the capture
-            _TRAP_AFTER_QXD5_KEY: [("e6d5", -0.1)],            # opponent recaptures the queen
+            _TRAP_AFTER_QXD5_KEY: [("e6d5", -0.1)],  # opponent recaptures the queen
         }
     )
     result = run_search(policy, MaterialEvaluator(), _white_game(_TRAP_FEN), k=2)
