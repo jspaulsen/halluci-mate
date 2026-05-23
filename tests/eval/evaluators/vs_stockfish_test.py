@@ -60,7 +60,7 @@ class _StubEngine:
 
     def predict(self, game: Game, constrained: bool | None = None) -> chess.Move:
         del constrained
-        return list(game.board.legal_moves)[0]
+        return next(iter(game.board.legal_moves))
 
 
 class _StubStockfish:

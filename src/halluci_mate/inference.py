@@ -57,9 +57,10 @@ class MovePrediction:
 class Predictor(Protocol):
     """Structural type for objects that can produce a ``MovePrediction``.
 
-    Lets the eval harness (and tests) accept any object exposing
-    ``predict_with_metadata`` rather than the concrete ``ChessInferenceEngine``
-    — the only method the harness actually calls.
+    Lets the eval harness (and tests) accept any object exposing this protocol
+    rather than the concrete ``ChessInferenceEngine``. Exposes two methods:
+    ``predict_with_metadata`` (used by the eval harness, returns full metadata)
+    and ``predict`` (move-only convenience used by play loops / third-party callers).
     """
 
     def predict_with_metadata(
