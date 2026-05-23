@@ -74,8 +74,12 @@ tests/search/
 ```
 
 `search/` depends on `chess`, `game.Game` / `game.Perspective`, and
-`inference.Predictor` / `inference.MovePrediction`. It does **not** import from
-`eval/`; the harness depends on search only through the `Predictor` protocol.
+`inference.Predictor` / `inference.MovePrediction`. It imports no `eval/`
+*behavior* at runtime; its only `eval/` reference is a `TYPE_CHECKING`-only
+import of the `TopKEntry` annotation (the element type of
+`MovePrediction.model_top_k`, which today lives in `eval/records.py` —
+`inference.py` already imports it from there at runtime). The harness depends on
+search only through the `Predictor` protocol.
 
 ## Components & interfaces
 
