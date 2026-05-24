@@ -10,14 +10,13 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, Protocol
 
 import chess
+import chess.engine
 
 if TYPE_CHECKING:
     import random
-
-    import chess.engine
 
 # Mate scores collapse to a finite cp so adjudication/selection arithmetic
 # never sees ``None`` (mirrors vs_stockfish ``_MATE_SCORE_CP``).
@@ -135,3 +134,67 @@ def select_wobble_move(
     in_band = [(move, cp) for move, cp in candidates if best_cp - cp <= config.wobble_cp]
     weights = _softmax([cp / config.wobble_temp for _, cp in in_band])
     return rng.choices([move for move, _ in in_band], weights=weights, k=1)[0]
+
+
+# White-relative result strings -> outcome label; "*" (no result) -> draw.
+_RESULT_TO_OUTCOME: dict[str, Outcome] = {"1-0": "white", "0-1": "black", "1/2-1/2": "draw"}
+
+
+class _AnalysisEngine(Protocol):
+    """The single ``chess.engine`` call ``play_seed`` makes (multipv analyse)."""
+
+    def analyse(self, board: chess.Board, limit: chess.engine.Limit, *, multipv: int) -> list[chess.engine.InfoDict]: ...
+
+
+@dataclass(frozen=True)
+class SelfPlayGame:
+    """One generated game: full move list (incl. seed prefix) + outcome."""
+
+    seed_source: str
+    seed_plies: int
+    moves_uci: list[str]
+    outcome: Outcome
+    termination: Termination
+
+
+# A SeedOpening is (seed_source, seed_moves_uci) -- see distill.seeds.
+SeedOpening = tuple[str, list[str]]
+
+
+def play_seed(engine: _AnalysisEngine, seed: SeedOpening, config: SelfPlayConfig, rng: random.Random) -> SelfPlayGame:
+    """Play one full-strength game from a human opening seed."""
+    seed_source, seed_moves = seed
+    prefix = seed_moves[: config.seed_plies]
+    board = chess.Board()
+    for uci in prefix:
+        board.push(chess.Move.from_uci(uci))
+    moves = list(prefix)
+
+    adjudicator = _AdjudicationState()
+    limit = chess.engine.Limit(depth=config.depth)
+    termination, outcome = _play_loop(engine, board, moves, adjudicator, config, rng, limit)
+    return SelfPlayGame(seed_source=seed_source, seed_plies=len(prefix), moves_uci=moves, outcome=outcome, termination=termination)
+
+
+def _play_loop(
+    engine: _AnalysisEngine,
+    board: chess.Board,
+    moves: list[str],
+    adjudicator: _AdjudicationState,
+    config: SelfPlayConfig,
+    rng: random.Random,
+    limit: chess.engine.Limit,
+) -> tuple[Termination, Outcome]:
+    """Mutate ``board``/``moves`` until termination; return (termination, outcome)."""
+    while True:
+        if board.is_game_over(claim_draw=True):
+            return "natural", _RESULT_TO_OUTCOME.get(board.result(claim_draw=True), "draw")
+        if board.ply() >= config.max_plies:
+            return "max-plies", "draw"
+        infos = engine.analyse(board, limit, multipv=config.multipv)
+        verdict = adjudicator.update(_best_white_cp(infos), board.ply(), config)
+        if verdict is not None:
+            return verdict
+        move = select_wobble_move(infos, board.turn, config, rng)
+        board.push(move)
+        moves.append(move.uci())

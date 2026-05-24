@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+from typing import TYPE_CHECKING
 
 import chess
 import chess.engine
@@ -8,13 +9,18 @@ import pytest
 
 from halluci_mate.distill.engine_selfplay import (
     SelfPlayConfig,
+    SelfPlayGame,
     _AdjudicationState,
     _best_white_cp,
     _pv_first_move,
     _softmax,
     _stm_cp,
+    play_seed,
     select_wobble_move,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def test_config_defaults() -> None:
@@ -149,3 +155,51 @@ def test_decisive_ply_resets_draw_run_without_adjudicating() -> None:
     assert state.update(800, 61, config) is None  # decisive but no verdict; draw_run reset to 0
     assert state.draw_run == 0
     assert state.update(0, 62, config) is None  # draw_run only back to 1, no premature draw
+
+
+class _ScriptedEngine:
+    """Returns MultiPV analysis from a fixed white-relative eval per call.
+
+    ``white_cp_fn(board)`` lets a test drive adjudication; the analysis always
+    offers the current legal moves as separate PV lines so wobble has choices.
+    """
+
+    def __init__(self, white_cp_fn: Callable[[chess.Board], int]) -> None:
+        self._white_cp_fn = white_cp_fn
+
+    def analyse(self, board: chess.Board, limit: chess.engine.Limit, *, multipv: int) -> list[chess.engine.InfoDict]:
+        del limit
+        white_cp = self._white_cp_fn(board)
+        infos: list[chess.engine.InfoDict] = []
+        for move in list(board.legal_moves)[:multipv]:
+            infos.append({"score": chess.engine.PovScore(chess.engine.Cp(white_cp), chess.WHITE), "pv": [move]})
+        return infos
+
+
+def test_play_seed_includes_seed_prefix_and_terminates_on_cap() -> None:
+    engine = _ScriptedEngine(lambda board: 0)  # balanced -> no resign
+    config = SelfPlayConfig(seed_plies=2, max_plies=6, draw_min_ply=999, multipv=3, wobble_cp=10_000)
+    game = play_seed(engine, ("game-x", ["e2e4", "e7e5"]), config, random.Random(0))
+    assert isinstance(game, SelfPlayGame)
+    assert game.moves_uci[:2] == ["e2e4", "e7e5"]
+    assert len(game.moves_uci) == 6
+    assert game.termination == "max-plies"
+    assert game.outcome == "draw"
+    assert game.seed_source == "game-x"
+    assert game.seed_plies == 2
+
+
+def test_play_seed_adjudicates_white_win() -> None:
+    engine = _ScriptedEngine(lambda board: 5000)  # white crushing every ply
+    config = SelfPlayConfig(seed_plies=0, resign_cp=700, resign_plies=2, max_plies=50, multipv=2, wobble_cp=10_000)
+    game = play_seed(engine, ("game-y", []), config, random.Random(0))
+    assert game.termination == "adjudicated-win"
+    assert game.outcome == "white"
+
+
+def test_play_seed_reproducible_with_same_rng_seed() -> None:
+    engine = _ScriptedEngine(lambda board: 0)
+    config = SelfPlayConfig(seed_plies=0, max_plies=8, draw_min_ply=999, multipv=4, wobble_cp=10_000)
+    g1 = play_seed(engine, ("g", []), config, random.Random(123))
+    g2 = play_seed(engine, ("g", []), config, random.Random(123))
+    assert g1.moves_uci == g2.moves_uci
