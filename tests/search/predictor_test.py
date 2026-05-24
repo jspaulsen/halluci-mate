@@ -15,8 +15,33 @@ _BACK_RANK_FEN = "6k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1"
 _BACK_RANK_KEY = "6k1/5ppp/8/8/8/8/5PPP/R5K1"
 
 
-def _white_game() -> Game:
-    return Game(board=chess.Board(_BACK_RANK_FEN), perspective=Perspective.WHITE)
+def _white_game(fen: str = _BACK_RANK_FEN) -> Game:
+    return Game(board=chess.Board(fen), perspective=Perspective.WHITE)
+
+
+# Equal-material position; Qxd5 wins a truly free pawn (no recapture) -> +1 edge
+# over the quiet Qd1. Lets us probe the margin gate with a small, known edge.
+_FREE_PAWN_FEN = "6k1/6pp/8/3p4/8/8/3Q2PP/6K1 w - - 0 1"
+_FREE_PAWN_KEY = "6k1/6pp/8/3p4/8/8/3Q2PP/6K1"
+
+
+def test_gate_overrides_when_edge_clears_margin() -> None:
+    policy = ScriptedPolicy({_FREE_PAWN_KEY: [("d2d1", -0.1), ("d2d5", -0.5)]})
+    # quiescence=False: score the position at depth-2 only so the +1 pawn edge is
+    # visible without quiescence reaching the pawn on subsequent plies.
+    predictor = SearchPredictor(policy=policy, leaf=MaterialEvaluator(), k=2, margin=0.5, quiescence=False)
+    assert predictor.predict(_white_game(_FREE_PAWN_FEN)) == chess.Move.from_uci("d2d5")
+
+
+def test_gate_keeps_argmax_when_edge_below_margin() -> None:
+    policy = ScriptedPolicy({_FREE_PAWN_KEY: [("d2d1", -0.1), ("d2d5", -0.5)]})
+    predictor = SearchPredictor(policy=policy, leaf=MaterialEvaluator(), k=2, margin=2.0, quiescence=False)
+    assert predictor.predict(_white_game(_FREE_PAWN_FEN)) == chess.Move.from_uci("d2d1")
+
+
+def test_negative_margin_raises() -> None:
+    with pytest.raises(ValueError, match="margin must be >= 0"):
+        SearchPredictor(policy=ScriptedPolicy(), leaf=MaterialEvaluator(), k=2, margin=-1.0)
 
 
 def test_prediction_replaces_move_but_preserves_policy_metadata() -> None:
