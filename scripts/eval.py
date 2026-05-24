@@ -103,7 +103,9 @@ def vs_stockfish_cmd(
     search: Annotated[bool, typer.Option("--search/--no-search", help="Wrap the model in depth-2 minimax search over its top-K.")] = False,
     search_k: Annotated[int, typer.Option(help="Number of top-K candidates search considers per move (default: 3). Only used with --search.")] = 3,
     search_leaf: Annotated[str, typer.Option(help=f"Leaf evaluator for search: one of {sorted(SEARCH_LEAVES)} (default: material-king-safety).")] = "material-king-safety",
-    search_margin: Annotated[float, typer.Option(help="Override the policy argmax only when search beats it by this many pawn-equivalents (default: 1.0). 0 = always trust search.")] = 1.0,
+    search_margin: Annotated[
+        float, typer.Option(help="Override the policy argmax only when search beats it by this many pawn-equivalents (default: 1.0). 0 = always trust search.")
+    ] = 1.0,
     search_quiescence: Annotated[bool, typer.Option("--search-quiescence/--no-search-quiescence", help="Extend captures/checks to a quiet leaf (default: on).")] = True,
     search_qdepth: Annotated[int, typer.Option(help="Quiescence depth cap (default: 4). Only used with --search.")] = 4,
 ) -> None:
