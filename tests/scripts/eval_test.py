@@ -503,6 +503,9 @@ def test_vs_stockfish_search_records_config(tmp_path: Path, monkeypatch: pytest.
     assert config["search"] is True
     assert config["search_k"] == 4
     assert config["search_leaf"] == "material"
+    assert config["search_margin"] == pytest.approx(1.0)
+    assert config["search_quiescence"] is True
+    assert config["search_qdepth"] == 4
 
 
 def test_search_leaves_registry_maps_names_to_classes() -> None:
