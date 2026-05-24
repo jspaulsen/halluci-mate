@@ -43,10 +43,14 @@ from halluci_mate.eval.metrics import compute_all
 from halluci_mate.eval.records import Evaluator
 from halluci_mate.eval.runs import RunReader, RunWriter, make_run_id, resolve_checkpoint_tag
 from halluci_mate.inference import ChessInferenceEngine, Predictor
-from halluci_mate.search.leaf import MaterialEvaluator
+from halluci_mate.search.leaf import MaterialEvaluator, MaterialKingSafetyEvaluator
 from halluci_mate.search.predictor import SearchPredictor
 
 DEFAULT_EVALS_DIR = Path("evals")
+
+# Name -> leaf evaluator class for the --search-leaf flag. Keys match the CLI
+# choices; values are zero-arg constructors.
+SEARCH_LEAVES = {"material": MaterialEvaluator, "material-king-safety": MaterialKingSafetyEvaluator}
 
 HalluciColor = Literal["white", "black", "alternate"]
 
@@ -96,8 +100,12 @@ def vs_stockfish_cmd(
         ),
     ] = False,
     blunder_threshold_cp: Annotated[int, typer.Option(help="Centipawn loss threshold for is_blunder. Only meaningful when --sf-analyze is set.")] = 200,
-    search: Annotated[bool, typer.Option("--search/--no-search", help="Wrap the model in depth-2 minimax search over its top-K (material leaf eval).")] = False,
+    search: Annotated[bool, typer.Option("--search/--no-search", help="Wrap the model in depth-2 minimax search over its top-K.")] = False,
     search_k: Annotated[int, typer.Option(help="Number of top-K candidates search considers per move (default: 3). Only used with --search.")] = 3,
+    search_leaf: Annotated[str, typer.Option(help=f"Leaf evaluator for search: one of {sorted(SEARCH_LEAVES)} (default: material-king-safety).")] = "material-king-safety",
+    search_margin: Annotated[float, typer.Option(help="Override the policy argmax only when search beats it by this many pawn-equivalents (default: 1.0). 0 = always trust search.")] = 1.0,
+    search_quiescence: Annotated[bool, typer.Option("--search-quiescence/--no-search-quiescence", help="Extend captures/checks to a quiet leaf (default: on).")] = True,
+    search_qdepth: Annotated[int, typer.Option(help="Quiescence depth cap (default: 4). Only used with --search.")] = 4,
 ) -> None:
     config = VsStockfishConfig(
         games=games,
@@ -128,8 +136,26 @@ def vs_stockfish_cmd(
 
     predictor: Predictor = engine
     if search:
-        predictor = SearchPredictor(policy=engine, leaf=MaterialEvaluator(), k=search_k)
-        extra_config.update({"search": True, "search_k": search_k, "search_leaf": "material"})
+        if search_leaf not in SEARCH_LEAVES:
+            raise typer.BadParameter(f"--search-leaf must be one of {sorted(SEARCH_LEAVES)}; got {search_leaf!r}")
+        predictor = SearchPredictor(
+            policy=engine,
+            leaf=SEARCH_LEAVES[search_leaf](),
+            k=search_k,
+            margin=search_margin,
+            quiescence=search_quiescence,
+            qdepth=search_qdepth,
+        )
+        extra_config.update(
+            {
+                "search": True,
+                "search_k": search_k,
+                "search_leaf": search_leaf,
+                "search_margin": search_margin,
+                "search_quiescence": search_quiescence,
+                "search_qdepth": search_qdepth,
+            }
+        )
 
     sf_engine = chess.engine.SimpleEngine.popen_uci(stockfish)
     try:

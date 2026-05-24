@@ -29,6 +29,7 @@ from halluci_mate.eval.runs import (
     make_run_id,
 )
 from halluci_mate.inference import MovePrediction
+from halluci_mate.search.leaf import MaterialEvaluator, MaterialKingSafetyEvaluator
 from tests.helpers.eval_records import DEFAULT_CHECKPOINT, make_per_game_record, make_per_move_record
 
 if TYPE_CHECKING:
@@ -491,6 +492,8 @@ def test_vs_stockfish_search_records_config(tmp_path: Path, monkeypatch: pytest.
             "--search",
             "--search-k",
             "4",
+            "--search-leaf",
+            "material",
         ]
     )
 
@@ -500,3 +503,8 @@ def test_vs_stockfish_search_records_config(tmp_path: Path, monkeypatch: pytest.
     assert config["search"] is True
     assert config["search_k"] == 4
     assert config["search_leaf"] == "material"
+
+
+def test_search_leaves_registry_maps_names_to_classes() -> None:
+    assert eval_cli.SEARCH_LEAVES["material"] is MaterialEvaluator
+    assert eval_cli.SEARCH_LEAVES["material-king-safety"] is MaterialKingSafetyEvaluator
