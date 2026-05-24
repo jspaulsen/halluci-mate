@@ -35,6 +35,10 @@ TEST_FRACTION = 0.01
 
 _METADATA_COLUMNS = ["elo_bucket", "result", "opening_family", "termination_type"]
 
+# Default stratification key for human (Lichess) data; engine data drops
+# ``elo_bucket`` since self-play continuations have no single rating.
+_DEFAULT_STRATIFY_COLUMNS: tuple[str, ...] = ("elo_bucket", "result", "opening_family")
+
 
 def create_tokenizer() -> ChessTokenizer:
     """Create a ChessTokenizer instance for use in the pipeline."""
@@ -118,7 +122,9 @@ def write_shard(examples: list[dict], shard_dir: Path, shard_index: int) -> Path
     return path
 
 
-def build_stratified_splits(shard_dir: Path, eval_size: int, test_size: int, seed: int) -> tuple[Dataset, Dataset, Dataset]:
+def build_stratified_splits(
+    shard_dir: Path, eval_size: int, test_size: int, seed: int, stratify_columns: tuple[str, ...] = _DEFAULT_STRATIFY_COLUMNS
+) -> tuple[Dataset, Dataset, Dataset]:
     """Load all shards and split into stratified train/eval/test datasets."""
     shard_files = sorted(str(p) for p in shard_dir.glob("shard_*.parquet"))
     all_data = load_dataset("parquet", data_files=shard_files, split="train")
@@ -126,7 +132,7 @@ def build_stratified_splits(shard_dir: Path, eval_size: int, test_size: int, see
     stratum_indices: dict[str, list[int]] = defaultdict(list)
     for idx in range(len(all_data)):
         row = all_data[idx]
-        key = f"{row['elo_bucket']}|{row['result']}|{row['opening_family']}"
+        key = "|".join(str(row[col]) for col in stratify_columns)
         stratum_indices[key].append(idx)
 
     holdout_size = eval_size + test_size
@@ -214,7 +220,7 @@ def stream_and_shard(stream: IterableDataset, tokenizer: ChessTokenizer, num_gam
     return total_examples, skipped
 
 
-def save_splits(shard_dir: Path, total_examples: int, output_dir: Path) -> None:
+def save_splits(shard_dir: Path, total_examples: int, output_dir: Path, stratify_columns: tuple[str, ...] = _DEFAULT_STRATIFY_COLUMNS) -> None:
     """Build stratified splits from shards and save as Parquet files."""
     eval_size = max(1, round(total_examples * EVAL_FRACTION))
     test_size = max(1, round(total_examples * TEST_FRACTION))
@@ -224,7 +230,7 @@ def save_splits(shard_dir: Path, total_examples: int, output_dir: Path) -> None:
         raise ValueError(f"Only {total_examples} sequences produced — need more than {min_required} for train/eval/test splits. Increase --num-games.")
 
     logger.info("Building stratified splits (eval=%d, test=%d)...", eval_size, test_size)
-    train_data, eval_data, test_data = build_stratified_splits(shard_dir, eval_size, test_size, SHUFFLE_SEED)
+    train_data, eval_data, test_data = build_stratified_splits(shard_dir, eval_size, test_size, SHUFFLE_SEED, stratify_columns)
     log_eval_distribution(eval_data)
 
     train_data = strip_metadata(train_data)
