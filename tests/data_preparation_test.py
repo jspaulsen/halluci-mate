@@ -196,6 +196,15 @@ def test_passes_highelo_filter_rejects_non_int_field() -> None:
     assert not passes_highelo_filter(sample, HIGHELO_MIN, HIGHELO_MAX_RATING_DIFF, HIGHELO_MAX_ELO_GAP)
 
 
+def test_build_stratified_splits_accepts_custom_columns(tmp_path: Path) -> None:
+    shard_dir = tmp_path / "_shards"
+    shard_dir.mkdir()
+    rows = [{"input_ids": [1, 2], "attention_mask": [1, 1], "result": "white" if i % 2 else "draw", "opening_family": "e4"} for i in range(20)]
+    Dataset.from_list(rows).to_parquet(str(shard_dir / "shard_00000.parquet"))
+    train, eval_, test = build_stratified_splits(shard_dir, eval_size=4, test_size=2, seed=42, stratify_columns=("result", "opening_family"))
+    assert len(train) + len(eval_) + len(test) == 20
+
+
 def test_strip_metadata_removes_columns() -> None:
     ds = Dataset.from_list(
         [
