@@ -1,6 +1,7 @@
 # Inference-Time Search v2 — Net-Strength Redesign
 
-Status: approved design, not yet implemented.
+Status: implemented on branch `jpaulsendev/inference-search` (2026-05-23); strength
+A/B (the measurement runbook) still pending.
 Builds on `docs/superpowers/specs/2026-05-23-inference-search-design.md` (the v1
 depth-2 material search) and the negative eval result recorded after it.
 
