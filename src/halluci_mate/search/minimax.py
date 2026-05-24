@@ -22,6 +22,9 @@ if TYPE_CHECKING:
     from halluci_mate.inference import MovePrediction, Predictor
     from halluci_mate.search.leaf import LeafEvaluator
 
+# Default quiescence search depth cap (plies beyond the depth-2 root/reply).
+DEFAULT_QDEPTH = 4
+
 
 @dataclass(frozen=True)
 class CandidateScore:
@@ -42,33 +45,68 @@ class SearchResult:
     root_prediction: MovePrediction
 
 
-def run_search(policy: Predictor, leaf: LeafEvaluator, game: Game, *, k: int) -> SearchResult:
+def run_search(policy: Predictor, leaf: LeafEvaluator, game: Game, *, k: int, quiescence: bool = True, qdepth: int = DEFAULT_QDEPTH) -> SearchResult:
     if k < 1:
         raise ValueError(f"k must be >= 1; got {k}")
+    if qdepth < 0:
+        raise ValueError(f"qdepth must be >= 0; got {qdepth}")
     pov = chess.WHITE if game.perspective == Perspective.WHITE else chess.BLACK
     root = policy.predict_with_metadata(game, constrained=True, record_top_k=k)
     candidates = _legal_candidates(root.model_top_k, game.board)
     if not candidates:
         raise ValueError(f"policy returned no legal top-K candidates for {game.board.fen()}")
-    scored = [_score_candidate(leaf, game.board, move, logprob, pov) for move, logprob in candidates]
+    scored = [_score_candidate(leaf, game.board, move, logprob, pov, quiescence=quiescence, qdepth=qdepth) for move, logprob in candidates]
     scored.sort(key=lambda candidate: (-candidate.score, -candidate.policy_logprob, candidate.move.uci()))
     return SearchResult(candidates=scored, chosen=scored[0].move, policy_argmax=candidates[0][0], root_prediction=root)
 
 
-def _score_candidate(leaf: LeafEvaluator, board_before: chess.Board, move: chess.Move, logprob: float, pov: chess.Color) -> CandidateScore:
+def _score_candidate(leaf: LeafEvaluator, board_before: chess.Board, move: chess.Move, logprob: float, pov: chess.Color, *, quiescence: bool, qdepth: int) -> CandidateScore:
     board_after = board_before.copy(stack=False)  # no move history needed below the root
     board_after.push(move)
     if board_after.is_game_over():
         return CandidateScore(move=move, policy_logprob=logprob, score=leaf.evaluate(board_after, pov=pov))
     # Opponent minimizes our score over ALL legal replies (full-width, board-only).
-    score = min(_reply_value(board_after, reply, leaf, pov) for reply in board_after.legal_moves)
+    score = min(_reply_value(board_after, reply, leaf, pov, quiescence=quiescence, qdepth=qdepth) for reply in board_after.legal_moves)
     return CandidateScore(move=move, policy_logprob=logprob, score=score)
 
 
-def _reply_value(board_after: chess.Board, reply: chess.Move, leaf: LeafEvaluator, pov: chess.Color) -> float:
+def _reply_value(board_after: chess.Board, reply: chess.Move, leaf: LeafEvaluator, pov: chess.Color, *, quiescence: bool, qdepth: int) -> float:
     child = board_after.copy(stack=False)
     child.push(reply)
+    if quiescence:
+        return quiesce(child, leaf, pov, qdepth)
     return leaf.evaluate(child, pov=pov)
+
+
+def quiesce(board: chess.Board, leaf: LeafEvaluator, pov: chess.Color, qdepth: int) -> float:
+    """Fixed-POV minimax that extends only forcing moves to a quiet leaf.
+
+    The leaf is always scored from ``pov``, so a node maximizes when
+    ``board.turn == pov`` and minimizes otherwise. Captures are always
+    extended; when the side to move is in check, all legal moves (evasions)
+    are extended. ``qdepth`` caps the recursion for guaranteed termination.
+    """
+    legal = list(board.legal_moves)
+    if not legal:
+        return leaf.evaluate(board, pov=pov)  # checkmate or stalemate
+    stand_pat = leaf.evaluate(board, pov=pov)
+    if qdepth == 0:
+        return stand_pat
+    in_check = board.is_check()
+    if in_check:
+        forcing = legal
+    else:
+        forcing = [move for move in legal if board.is_capture(move)]
+        if not forcing:
+            return stand_pat  # quiet position
+    maximizing = board.turn == pov
+    best = (float("-inf") if maximizing else float("inf")) if in_check else stand_pat
+    for move in forcing:
+        child = board.copy(stack=False)
+        child.push(move)
+        value = quiesce(child, leaf, pov, qdepth - 1)
+        best = max(best, value) if maximizing else min(best, value)
+    return best
 
 
 def _legal_candidates(top_k: list[TopKEntry], board: chess.Board) -> list[tuple[chess.Move, float]]:

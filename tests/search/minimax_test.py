@@ -6,8 +6,8 @@ import chess
 import pytest
 
 from halluci_mate.game import Game, Perspective
-from halluci_mate.search.leaf import MaterialEvaluator
-from halluci_mate.search.minimax import run_search
+from halluci_mate.search.leaf import MATE_VALUE, MaterialEvaluator
+from halluci_mate.search.minimax import quiesce, run_search
 from tests.helpers.search_policy import ScriptedPolicy
 
 # Back-rank position: Ra1-a8 is mate; g1f1 is a quiet alternative.
@@ -73,3 +73,40 @@ def test_tie_break_prefers_logprob_then_uci() -> None:
 def test_k_below_one_raises() -> None:
     with pytest.raises(ValueError, match="k must be >= 1"):
         run_search(ScriptedPolicy(), MaterialEvaluator(), _white_game(_QUIET_FEN), k=0)
+
+
+# Black to move; ...exd5 wins the hanging White queen. Static eval over-credits White.
+_HANGING_Q_FEN = "6k1/8/4p3/3Q4/8/8/8/6K1 b - - 0 1"
+
+# White to move and in check (Re1+). Only Rxe1, then ...Rxe1# — a forced mate two
+# plies deep, reachable only through the check-evasion + recapture extension.
+_FORCED_MATE_FEN = "4r1k1/8/8/8/8/8/5PPP/3Rr1K1 w - - 0 1"
+
+
+def test_quiescence_resolves_a_hanging_capture() -> None:
+    board = chess.Board(_HANGING_Q_FEN)
+    leaf = MaterialEvaluator()
+    assert leaf.evaluate(board, pov=chess.WHITE) == 8.0  # static stand-pat over-credits White
+    assert quiesce(board, leaf, chess.WHITE, 4) == -1.0  # ...exd5 leaves White down
+
+
+def test_quiescence_depth_zero_is_static() -> None:
+    board = chess.Board(_HANGING_Q_FEN)
+    assert quiesce(board, MaterialEvaluator(), chess.WHITE, 0) == 8.0
+
+
+def test_quiescence_sees_forced_mate_through_check() -> None:
+    board = chess.Board(_FORCED_MATE_FEN)
+    assert quiesce(board, MaterialEvaluator(), chess.WHITE, 4) == -MATE_VALUE
+
+
+def test_run_search_threads_quiescence_flag() -> None:
+    policy = ScriptedPolicy({_TRAP_ROOT_KEY: [("d1d5", -0.1), ("d1d2", -0.5)]})
+    for quiescence in (True, False):
+        result = run_search(policy, MaterialEvaluator(), _white_game(_TRAP_FEN), k=2, quiescence=quiescence)
+        assert result.chosen == chess.Move.from_uci("d1d2")
+
+
+def test_negative_qdepth_raises() -> None:
+    with pytest.raises(ValueError, match="qdepth must be >= 0"):
+        run_search(ScriptedPolicy(), MaterialEvaluator(), _white_game(_QUIET_FEN), k=1, qdepth=-1)
