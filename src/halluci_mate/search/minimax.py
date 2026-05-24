@@ -1,11 +1,10 @@
-"""Depth-2 minimax search over the policy's legal top-K.
+"""Depth-2 minimax: the LM proposes root candidates, board search verifies them.
 
-For each of the policy's top-K candidate moves, ``run_search`` asks the policy
-for the opponent's top-K replies, scores each resulting leaf with a
-``LeafEvaluator``, takes the opponent's worst-for-us reply (min), and finally
-the best candidate (argmax). Leaf scoring is board-only, so the cost is up to
-``1 + k`` forwards (a candidate that ends the game skips its reply pass). See
-``docs/superpowers/specs/2026-05-23-inference-search-design.md``.
+The model's top-K supplies the root candidate moves; the opponent's reply is
+searched full-width over *all* legal moves (the leaf is board-only, so the LM is
+not queried below the root), and each candidate is scored by the opponent's
+worst-for-us reply. See
+``docs/superpowers/specs/2026-05-23-search-strength-v2-design.md``.
 """
 
 from __future__ import annotations
@@ -15,10 +14,11 @@ from typing import TYPE_CHECKING
 
 import chess
 
-from halluci_mate.game import Game, Perspective
+from halluci_mate.game import Perspective
 
 if TYPE_CHECKING:
     from halluci_mate.eval.records import TopKEntry
+    from halluci_mate.game import Game
     from halluci_mate.inference import MovePrediction, Predictor
     from halluci_mate.search.leaf import LeafEvaluator
 
@@ -50,31 +50,25 @@ def run_search(policy: Predictor, leaf: LeafEvaluator, game: Game, *, k: int) ->
     candidates = _legal_candidates(root.model_top_k, game.board)
     if not candidates:
         raise ValueError(f"policy returned no legal top-K candidates for {game.board.fen()}")
-    scored = [_score_candidate(policy, leaf, game, move, logprob, pov, k) for move, logprob in candidates]
+    scored = [_score_candidate(leaf, game.board, move, logprob, pov) for move, logprob in candidates]
     scored.sort(key=lambda candidate: (-candidate.score, -candidate.policy_logprob, candidate.move.uci()))
     return SearchResult(candidates=scored, chosen=scored[0].move, policy_argmax=candidates[0][0], root_prediction=root)
 
 
-def _score_candidate(policy: Predictor, leaf: LeafEvaluator, game: Game, move: chess.Move, logprob: float, pov: chess.Color, k: int) -> CandidateScore:
-    board_after = game.board.copy(stack=True)  # keep move history so the branch tokenizes correctly
+def _score_candidate(leaf: LeafEvaluator, board_before: chess.Board, move: chess.Move, logprob: float, pov: chess.Color) -> CandidateScore:
+    board_after = board_before.copy(stack=False)  # no move history needed below the root
     board_after.push(move)
     if board_after.is_game_over():
         return CandidateScore(move=move, policy_logprob=logprob, score=leaf.evaluate(board_after, pov=pov))
-    branch = Game(board=board_after, perspective=game.perspective)
-    replies = policy.predict_with_metadata(branch, constrained=True, record_top_k=k)
-    reply_moves = [reply for reply, _ in _legal_candidates(replies.model_top_k, board_after)]
-    return CandidateScore(move=move, policy_logprob=logprob, score=_min_reply_score(board_after, reply_moves, leaf, pov))
+    # Opponent minimizes our score over ALL legal replies (full-width, board-only).
+    score = min(_reply_value(board_after, reply, leaf, pov) for reply in board_after.legal_moves)
+    return CandidateScore(move=move, policy_logprob=logprob, score=score)
 
 
-def _min_reply_score(board_after: chess.Board, reply_moves: list[chess.Move], leaf: LeafEvaluator, pov: chess.Color) -> float:
-    if not reply_moves:  # defensive: non-terminal board always has legal replies
-        return leaf.evaluate(board_after, pov=pov)
-    scores: list[float] = []
-    for reply in reply_moves:
-        leaf_board = board_after.copy(stack=False)  # material eval needs no history
-        leaf_board.push(reply)
-        scores.append(leaf.evaluate(leaf_board, pov=pov))
-    return min(scores)  # opponent chooses the reply that minimises our score
+def _reply_value(board_after: chess.Board, reply: chess.Move, leaf: LeafEvaluator, pov: chess.Color) -> float:
+    child = board_after.copy(stack=False)
+    child.push(reply)
+    return leaf.evaluate(child, pov=pov)
 
 
 def _legal_candidates(top_k: list[TopKEntry], board: chess.Board) -> list[tuple[chess.Move, float]]:

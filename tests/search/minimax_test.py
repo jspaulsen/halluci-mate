@@ -17,7 +17,6 @@ _BACK_RANK_KEY = "6k1/5ppp/8/8/8/8/5PPP/R5K1"
 # Trap position: White Qxd5 wins a pawn but hangs the queen to exd5.
 _TRAP_FEN = "6k1/5ppp/4p3/3p4/8/8/6PP/3Q2K1 w - - 0 1"
 _TRAP_ROOT_KEY = "6k1/5ppp/4p3/3p4/8/8/6PP/3Q2K1"
-_TRAP_AFTER_QXD5_KEY = "6k1/5ppp/4p3/3Q4/8/8/6PP/6K1"
 
 # Quiet equal-material position for tie-break checks.
 _QUIET_FEN = "6k1/5ppp/8/8/8/8/5PPP/6K1 w - - 0 1"
@@ -43,12 +42,9 @@ def test_picks_mate_over_quiet_move_and_overrides_policy_argmax() -> None:
 
 
 def test_avoids_hanging_a_piece_via_opponent_min() -> None:
-    policy = ScriptedPolicy(
-        {
-            _TRAP_ROOT_KEY: [("d1d5", -0.1), ("d1d2", -0.5)],  # policy greedily prefers the capture
-            _TRAP_AFTER_QXD5_KEY: [("e6d5", -0.1)],  # opponent recaptures the queen
-        }
-    )
+    # Opponent replies are now searched full-width (no scripted reply needed):
+    # after Qxd5, ...exd5 recaptures the queen, so search keeps the quiet Qd2.
+    policy = ScriptedPolicy({_TRAP_ROOT_KEY: [("d1d5", -0.1), ("d1d2", -0.5)]})
     result = run_search(policy, MaterialEvaluator(), _white_game(_TRAP_FEN), k=2)
 
     assert result.policy_argmax == chess.Move.from_uci("d1d5")
