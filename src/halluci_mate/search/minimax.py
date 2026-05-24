@@ -66,11 +66,11 @@ def _score_candidate(leaf: LeafEvaluator, board_before: chess.Board, move: chess
     if board_after.is_game_over():
         return CandidateScore(move=move, policy_logprob=logprob, score=leaf.evaluate(board_after, pov=pov))
     # Opponent minimizes our score over ALL legal replies (full-width, board-only).
-    score = min(_reply_value(board_after, reply, leaf, pov, quiescence=quiescence, qdepth=qdepth) for reply in board_after.legal_moves)
+    score = min(_reply_value(leaf, board_after, reply, pov, quiescence=quiescence, qdepth=qdepth) for reply in board_after.legal_moves)
     return CandidateScore(move=move, policy_logprob=logprob, score=score)
 
 
-def _reply_value(board_after: chess.Board, reply: chess.Move, leaf: LeafEvaluator, pov: chess.Color, *, quiescence: bool, qdepth: int) -> float:
+def _reply_value(leaf: LeafEvaluator, board_after: chess.Board, reply: chess.Move, pov: chess.Color, *, quiescence: bool, qdepth: int) -> float:
     child = board_after.copy(stack=False)
     child.push(reply)
     if quiescence:

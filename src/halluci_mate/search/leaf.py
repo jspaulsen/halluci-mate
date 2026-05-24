@@ -36,15 +36,25 @@ class MaterialEvaluator:
     """Piece-count leaf eval with checkmate / draw terminal handling."""
 
     def evaluate(self, board: chess.Board, *, pov: chess.Color) -> float:
-        if board.is_checkmate():
-            # The side to move has been checkmated.
-            return -MATE_VALUE if board.turn == pov else MATE_VALUE
-        if board.is_stalemate() or board.is_insufficient_material():
-            return 0.0
-        white = _material(board, chess.WHITE)
-        black = _material(board, chess.BLACK)
-        score = white - black
-        return score if pov == chess.WHITE else -score
+        terminal = _terminal_score(board, pov)
+        if terminal is not None:
+            return terminal
+        return _material_balance(board, pov)
+
+
+def _terminal_score(board: chess.Board, pov: chess.Color) -> float | None:
+    """Return the material-only score for a terminal board, or ``None`` if play continues."""
+    if board.is_checkmate():
+        # The side to move has been checkmated.
+        return -MATE_VALUE if board.turn == pov else MATE_VALUE
+    if board.is_stalemate() or board.is_insufficient_material():
+        return 0.0
+    return None
+
+
+def _material_balance(board: chess.Board, pov: chess.Color) -> float:
+    score = _material(board, chess.WHITE) - _material(board, chess.BLACK)
+    return score if pov == chess.WHITE else -score
 
 
 def _material(board: chess.Board, color: chess.Color) -> float:
@@ -60,15 +70,12 @@ W_KING_OPEN_FILE = 0.25  # penalty per open/semi-open file on or next to the kin
 class MaterialKingSafetyEvaluator:
     """Material plus a small king-safety term (pawn shield + open files)."""
 
-    def __init__(self) -> None:
-        self._material = MaterialEvaluator()
-
     def evaluate(self, board: chess.Board, *, pov: chess.Color) -> float:
-        if board.is_checkmate() or board.is_stalemate() or board.is_insufficient_material():
-            return self._material.evaluate(board, pov=pov)  # terminal: material handles mate/draw
-        base = self._material.evaluate(board, pov=pov)
+        terminal = _terminal_score(board, pov)
+        if terminal is not None:
+            return terminal  # terminal boards are material-only (no king-safety term)
         safety = _king_safety(board, chess.WHITE) - _king_safety(board, chess.BLACK)
-        return base + (safety if pov == chess.WHITE else -safety)
+        return _material_balance(board, pov) + (safety if pov == chess.WHITE else -safety)
 
 
 def _king_safety(board: chess.Board, color: chess.Color) -> float:
@@ -102,12 +109,5 @@ def _king_open_files(board: chess.Board, color: chess.Color) -> int:
     if king_sq is None:
         return 0
     king_file = chess.square_file(king_sq)
-    pawn = chess.Piece(chess.PAWN, color)
-    exposed = 0
-    for df in (-1, 0, 1):
-        file = king_file + df
-        if not 0 <= file <= 7:
-            continue
-        if not any(board.piece_at(chess.square(file, rank)) == pawn for rank in range(8)):
-            exposed += 1
-    return exposed
+    pawn_files = {chess.square_file(sq) for sq in board.pieces(chess.PAWN, color)}
+    return sum(1 for df in (-1, 0, 1) if 0 <= king_file + df <= 7 and king_file + df not in pawn_files)
