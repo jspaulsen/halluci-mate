@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING
 import chess
 
 if TYPE_CHECKING:
+    import random
+
     import chess.engine
 
 # Mate scores collapse to a finite cp so adjudication/selection arithmetic
@@ -81,3 +83,24 @@ def _softmax(values: list[float]) -> list[float]:
     exps = [math.exp(v - top) for v in values]
     total = sum(exps)
     return [e / total for e in exps]
+
+
+def select_wobble_move(
+    infos: list[chess.engine.InfoDict],
+    turn: chess.Color,
+    config: SelfPlayConfig,
+    rng: random.Random,
+) -> chess.Move:
+    """Sample a near-best move from MultiPV analysis (the diversity 'wobble').
+
+    Keeps lines within ``config.wobble_cp`` of the best side-to-move score,
+    then softmax-samples by ``cp / config.wobble_temp`` (lower temp favors the
+    best move; larger temp approaches uniform). ``rng`` makes this reproducible.
+    """
+    candidates = [(move, _stm_cp(info, turn)) for info in infos if (move := _pv_first_move(info)) is not None]
+    if not candidates:
+        raise ValueError("analysis returned no candidate moves")
+    best_cp = max(cp for _, cp in candidates)
+    in_band = [(move, cp) for move, cp in candidates if best_cp - cp <= config.wobble_cp]
+    weights = _softmax([cp / config.wobble_temp for _, cp in in_band])
+    return rng.choices([move for move, _ in in_band], weights=weights, k=1)[0]

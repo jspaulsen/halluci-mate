@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import random
+
 import chess
 import chess.engine
 import pytest
@@ -10,6 +12,7 @@ from halluci_mate.distill.engine_selfplay import (
     _pv_first_move,
     _softmax,
     _stm_cp,
+    select_wobble_move,
 )
 
 
@@ -69,3 +72,32 @@ def test_softmax_sums_to_one_and_orders() -> None:
     weights = _softmax([0.0, 1.0, 2.0])
     assert sum(weights) == pytest.approx(1.0)
     assert weights[2] > weights[1] > weights[0]
+
+
+def test_wobble_filters_out_of_band_moves() -> None:
+    # Black to move: white-relative scores invert. Make e7e5/g8f6 best for Black.
+    infos = [_info(-200, "e7e5"), _info(-205, "g8f6"), _info(50, "a7a6")]
+    config = SelfPlayConfig(wobble_cp=30)
+    rng = random.Random(0)
+    chosen = {select_wobble_move(infos, chess.BLACK, config, rng).uci() for _ in range(50)}
+    assert chosen <= {"e7e5", "g8f6"}  # a7a6 is >30cp worse, never chosen
+
+
+def test_wobble_single_candidate_is_deterministic() -> None:
+    infos = [_info(20, "e2e4"), _info(-400, "a2a3")]
+    config = SelfPlayConfig(wobble_cp=30)
+    assert select_wobble_move(infos, chess.WHITE, config, random.Random(0)).uci() == "e2e4"
+
+
+def test_wobble_seeded_rng_is_reproducible() -> None:
+    infos = [_info(20, "e2e4"), _info(10, "d2d4"), _info(5, "g1f3")]
+    config = SelfPlayConfig(wobble_cp=30)
+    a = [select_wobble_move(infos, chess.WHITE, config, random.Random(7)).uci() for _ in range(5)]
+    b = [select_wobble_move(infos, chess.WHITE, config, random.Random(7)).uci() for _ in range(5)]
+    assert a == b
+
+
+def test_wobble_raises_when_no_pv() -> None:
+    infos = [{"score": chess.engine.PovScore(chess.engine.Cp(0), chess.WHITE)}]
+    with pytest.raises(ValueError, match="no candidate moves"):
+        select_wobble_move(infos, chess.WHITE, SelfPlayConfig(), random.Random(0))
