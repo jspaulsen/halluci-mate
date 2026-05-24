@@ -64,5 +64,6 @@ class SearchPredictor:
 
     def _gated_move(self, result: SearchResult) -> chess.Move:
         best = result.candidates[0]  # highest minimax score (score-sorted)
+        # policy_argmax is always present in candidates: run_search sets it from candidates[0][0].
         argmax = next(candidate for candidate in result.candidates if candidate.move == result.policy_argmax)
         return best.move if (best.score - argmax.score) >= self.margin else argmax.move
