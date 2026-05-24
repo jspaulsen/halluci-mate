@@ -8,6 +8,7 @@ import pytest
 
 from halluci_mate.distill.engine_selfplay import (
     SelfPlayConfig,
+    _AdjudicationState,
     _best_white_cp,
     _pv_first_move,
     _softmax,
@@ -101,3 +102,50 @@ def test_wobble_raises_when_no_pv() -> None:
     infos = [{"score": chess.engine.PovScore(chess.engine.Cp(0), chess.WHITE)}]
     with pytest.raises(ValueError, match="no candidate moves"):
         select_wobble_move(infos, chess.WHITE, SelfPlayConfig(), random.Random(0))
+
+
+def test_adjudicates_resign_after_consecutive_winning_plies() -> None:
+    config = SelfPlayConfig(resign_cp=700, resign_plies=4)
+    state = _AdjudicationState()
+    verdicts = [state.update(900, ply, config) for ply in range(4)]
+    assert verdicts[:3] == [None, None, None]
+    assert verdicts[3] == ("adjudicated-win", "white")
+
+
+def test_resign_run_resets_when_eval_drops_back() -> None:
+    config = SelfPlayConfig(resign_cp=700, resign_plies=3)
+    state = _AdjudicationState()
+    assert state.update(900, 0, config) is None
+    assert state.update(100, 1, config) is None  # back in band -> run resets
+    assert state.update(900, 2, config) is None
+    assert state.update(900, 3, config) is None
+    assert state.update(900, 4, config) == ("adjudicated-win", "white")
+
+
+def test_black_winning_eval_adjudicates_black() -> None:
+    config = SelfPlayConfig(resign_cp=700, resign_plies=2)
+    state = _AdjudicationState()
+    assert state.update(-800, 10, config) is None
+    assert state.update(-800, 11, config) == ("adjudicated-win", "black")
+
+
+def test_adjudicates_draw_only_after_min_ply() -> None:
+    config = SelfPlayConfig(draw_cp=15, draw_plies=2, draw_min_ply=60)
+    state = _AdjudicationState()
+    assert state.update(0, 58, config) is None  # before draw_min_ply, no counting
+    assert state.update(0, 59, config) is None
+    assert state.update(0, 60, config) is None
+    assert state.update(0, 61, config) == ("adjudicated-draw", "draw")
+
+
+def test_decisive_ply_resets_draw_run_without_adjudicating() -> None:
+    # A non-adjudicating decisive spike (eval out of the draw band but below the
+    # resign streak) must reset draw_run so it cannot carry over into a later
+    # spurious draw verdict. Resign needs 10 plies here, so the spike at ply 61
+    # does not return early -- execution reaches the draw branch and resets.
+    config = SelfPlayConfig(draw_cp=15, draw_plies=2, draw_min_ply=60, resign_cp=700, resign_plies=10)
+    state = _AdjudicationState()
+    assert state.update(0, 60, config) is None  # draw_run -> 1
+    assert state.update(800, 61, config) is None  # decisive but no verdict; draw_run reset to 0
+    assert state.draw_run == 0
+    assert state.update(0, 62, config) is None  # draw_run only back to 1, no premature draw
