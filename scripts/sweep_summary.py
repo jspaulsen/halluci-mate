@@ -68,9 +68,11 @@ def override_rate(records: Iterable[Record]) -> float | None:
     return overrides / eligible if eligible else None
 
 
-def summarize_run(entry: RunEntry) -> CellSummary:
+def summarize_run(entry: RunEntry) -> CellSummary | None:
     reader = RunReader(entry.run_dir)
     config = reader.read_config()
+    if "search_k" not in config:
+        return None  # not a search run — exclude it from the search sweep
     headline = headline_metrics(Evaluator.VS_STOCKFISH, load_or_compute_metrics(entry))
     return CellSummary(
         run_id=entry.run_id,
@@ -91,13 +93,20 @@ def summarize_run(entry: RunEntry) -> CellSummary:
 
 
 def collect_summaries(evals_dir: Path, tag_prefix: str) -> list[CellSummary]:
-    summaries = [summarize_run(entry) for entry in discover_runs(evals_dir) if entry.evaluator is Evaluator.VS_STOCKFISH and _run_tag(entry.run_id).startswith(tag_prefix)]
+    summaries = [
+        summary
+        for entry in discover_runs(evals_dir)
+        if entry.evaluator is Evaluator.VS_STOCKFISH and _run_tag(entry.run_id).startswith(tag_prefix)
+        if (summary := summarize_run(entry)) is not None
+    ]
     summaries.sort(key=lambda cell: cell.score_rate, reverse=True)
     return summaries
 
 
 def _run_tag(run_id: str) -> str:
     """Extract the tag segment from a `<timestamp>_<tag>_<evaluator>` run-id."""
+    # `parts[1]` is the tag: `make_run_id` (halluci_mate.eval.runs) builds the id
+    # as `<timestamp>_<tag>_<evaluator>` and forbids `_` in the tag.
     parts = run_id.split("_")
     return parts[1] if len(parts) >= 3 else ""
 

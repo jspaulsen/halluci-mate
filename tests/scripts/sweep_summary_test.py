@@ -56,6 +56,20 @@ def test_collect_summaries_sorts_by_score_and_parses_knobs(tmp_path: Path) -> No
     assert summaries[1].override_rate == 0.5  # 1 of 2 decisions overridden
 
 
+def test_collect_summaries_excludes_non_search_runs(tmp_path: Path) -> None:
+    override = make_per_move_record(1, model_move="d2d4", model_top_k=[TopKEntry(move="g1f3", logprob=-0.2)])
+    _write_run(tmp_path, "2026-05-25T01-00-00_v2d-gridk3t10_vs-stockfish", search_k=3, search_margin=1.0, score_rate=0.10, records=[override])
+    # A no-search vs_stockfish run whose tag matches the prefix must be skipped, not crash.
+    no_search_dir = tmp_path / "2026-05-25T02-00-00_v2d-grid-baseline_vs-stockfish"
+    writer = RunWriter(no_search_dir)
+    writer.write_config({"evaluator": "vs_stockfish", "run_id": no_search_dir.name, "checkpoint": "jspaulsen/halluci-mate-v2d", "games": 30})
+    writer.write_metrics({"win_rate": {"overall": {"score_rate": 0.30, "wins": 3, "draws": 0, "losses": 27}}})
+
+    summaries = sweep_summary.collect_summaries(tmp_path, "v2d-grid")
+
+    assert [cell.search_k for cell in summaries] == [3]  # only the search run
+
+
 def test_override_rate_counts_played_vs_argmax_disagreements() -> None:
     records = [
         make_per_move_record(0, model_move="e2e4", model_top_k=[TopKEntry(move="e2e4", logprob=-0.1)]),  # agree
