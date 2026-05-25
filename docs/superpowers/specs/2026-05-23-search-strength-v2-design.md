@@ -1,7 +1,9 @@
 # Inference-Time Search v2 — Net-Strength Redesign
 
-Status: implemented on branch `jpaulsendev/inference-search` (2026-05-23); strength
-A/B (the measurement runbook) still pending.
+Status: implemented and confirmed on branch `jpaulsendev/inference-search` (PR #21).
+Strength A/B (100g, skill 5 / depth 12, --sf-analyze, t=0, alternate): the default
+config (material-king-safety leaf, τ=1.0, quiescence, k=3) lifts v2d's score_rate
+from 0.090 to **0.175** — clearing the ship bar and reversing the v1 regression.
 Builds on `docs/superpowers/specs/2026-05-23-inference-search-design.md` (the v1
 depth-2 material search) and the negative eval result recorded after it.
 
