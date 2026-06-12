@@ -8,9 +8,8 @@ Writes intermediate shards to disk to avoid OOM on large datasets, then
 builds stratified eval and test sets balanced across ELO, result, and
 opening dimensions.
 
-Only blitz games are included — mixing time controls confounds the Elo
-signal since move quality varies significantly across formats.
-Ref: Allie (ICLR 2025) https://openreview.net/forum?id=bc2H72hGxB
+Only Rapid + Classical games are included — longer time controls yield
+higher move quality at a given Elo, which we want for pretrain signal.
 
 Usage:
     uv run python scripts/prepare_data.py
@@ -50,10 +49,8 @@ def prepare_dataset(
 
     logger.info("Loading Lichess dataset (streaming)...")
     stream = load_dataset("Lichess/standard-chess-games", split="train", streaming=True)
-    # Blitz-only: mixing time controls confounds the Elo signal since move quality
-    # varies significantly across formats (Allie validated blitz-only → GM-calibrated play).
-    # Ref: https://openreview.net/forum?id=bc2H72hGxB
-    stream = stream.filter(lambda x: x["Termination"] == "Normal" and "blitz" in x.get("Event", "").lower())
+    # Rapid + Classical only: longer time controls → higher move quality at a given Elo.
+    stream = stream.filter(lambda x: x["Termination"] == "Normal" and ("rapid" in x.get("Event", "").lower() or "classical" in x.get("Event", "").lower()))
 
     total_examples, _ = stream_and_shard(stream, tokenizer, num_games, shard_dir)
     save_splits(shard_dir, total_examples, output_dir)

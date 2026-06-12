@@ -303,9 +303,32 @@ Only valid on records where `sf_best_move` and `centipawn_loss` are populated
 (i.e., the run was done with `--sf-analyze`).
 
 Keep the exporter deliberately simple — threshold on CPL, optional dedup by
-FEN, output as JSONL `{prompt, chosen, rejected}` in whatever format the DPO
-trainer consumes. Schema changes to the DPO format should live in the
-exporter, not the collection records.
+FEN, output as JSONL in whatever format the DPO trainer consumes. Schema
+changes to the DPO format should live in the exporter, not the collection
+records.
+
+### Output schema
+
+Each JSONL line is one preference pair:
+
+```
+{
+  "prompt":     <FEN before the move>,
+  "moves_uci":  [<UCI move 1>, <UCI move 2>, ...],
+  "model_side": "white" | "black",
+  "chosen":     <UCI move>,
+  "rejected":   <UCI move>
+}
+```
+
+`prompt` (FEN) is retained for human inspection and dedup-by-FEN, but the
+model itself is conditioned on `moves_uci` prefixed by the `<WHITE>` /
+`<BLACK>` perspective token — the chess tokenizer has no FEN vocabulary, so
+the FEN string alone is not enough to reproduce the prompt context the
+model saw at decision time. `moves_uci` is reconstructed by walking
+per-move records in `ply` order per game and interleaving each record's
+`prior_opponent_move` (when present) with its `model_move`; the snapshot
+taken just before each labeled record is that pair's `moves_uci`.
 
 ## Incremental build order
 
