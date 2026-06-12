@@ -143,6 +143,18 @@ def _iter_positions(config: LegalRateConfig) -> Iterator[_Position]:
 
 
 def _iter_fen_file(path: Path) -> Iterator[_Position]:
+    """Yield positions parsed from a flat FEN file.
+
+    Caveat: a bare FEN does not carry move history, so the resulting ``Game``
+    is handed to the predictor with an empty ``move_stack``. The model was
+    trained on token sequences starting from the initial position, so with no
+    prefix it greedy-decodes its top *opening* move regardless of the actual
+    board state — measured legality on mid/endgame FENs collapses to roughly
+    "is my favorite opening move incidentally legal here?". Use
+    ``--sample-from-games`` (which replays moves onto the board) for any FEN
+    drawn from a non-opening position; the FEN-file path is only meaningful
+    for positions at or near move 1.
+    """
     with path.open(encoding="utf-8") as fp:
         for lineno, raw in enumerate(fp, start=1):
             fen = raw.strip()
