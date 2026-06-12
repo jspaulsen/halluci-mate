@@ -29,6 +29,7 @@ from halluci_mate.eval.runs import (
     make_run_id,
 )
 from halluci_mate.inference import MovePrediction
+from halluci_mate.search.leaf import MaterialEvaluator, MaterialKingSafetyEvaluator
 from tests.helpers.eval_records import DEFAULT_CHECKPOINT, make_per_game_record, make_per_move_record
 
 if TYPE_CHECKING:
@@ -83,6 +84,10 @@ class _StubEngine:
             model_top_k=[TopKEntry(move=played.uci(), logprob=-0.1)] if record_top_k > 0 else [],
             mask_used=masked,
         )
+
+    def predict(self, game: Game, constrained: bool | None = None) -> chess.Move:
+        del constrained
+        return next(iter(game.board.legal_moves))
 
 
 class _StubStockfish:
@@ -463,3 +468,46 @@ def test_report_recovers_from_corrupt_metrics(tmp_path: Path) -> None:
 
     metrics = json.loads((run_dir / METRICS_FILENAME).read_text(encoding="utf-8"))
     assert metrics["evaluator"] == Evaluator.VS_STOCKFISH.value
+
+
+def test_vs_stockfish_search_records_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`--search` wraps the engine and records the search parameters in config.json."""
+    stockfish = _StubStockfish()
+    _patch_engines(monkeypatch, stockfish)
+    evals_dir = tmp_path / "evals"
+
+    eval_cli.main(
+        [
+            "vs-stockfish",
+            "--checkpoint",
+            "stub-ckpt",
+            "--games",
+            "1",
+            "--max-plies",
+            "4",
+            "--halluci-color",
+            "white",
+            "--evals-dir",
+            str(evals_dir),
+            "--search",
+            "--search-k",
+            "4",
+            "--search-leaf",
+            "material",
+        ]
+    )
+
+    run_dirs = [p for p in evals_dir.iterdir() if p.is_dir()]
+    assert len(run_dirs) == 1
+    config = json.loads((run_dirs[0] / CONFIG_FILENAME).read_text(encoding="utf-8"))
+    assert config["search"] is True
+    assert config["search_k"] == 4
+    assert config["search_leaf"] == "material"
+    assert config["search_margin"] == pytest.approx(1.0)
+    assert config["search_quiescence"] is True
+    assert config["search_qdepth"] == 4
+
+
+def test_search_leaves_registry_maps_names_to_classes() -> None:
+    assert eval_cli.SEARCH_LEAVES["material"] is MaterialEvaluator
+    assert eval_cli.SEARCH_LEAVES["material-king-safety"] is MaterialKingSafetyEvaluator

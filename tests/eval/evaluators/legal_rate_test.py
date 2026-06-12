@@ -67,6 +67,10 @@ class _ConstantEngine:
             mask_used=False,
         )
 
+    def predict(self, game: Game, constrained: bool | None = None) -> chess.Move:
+        del constrained
+        return next(iter(game.board.legal_moves))
+
 
 def _read_legal_records(run_dir: Path) -> list[PerLegalRateRecord]:
     records = RunReader(run_dir).read_records()
