@@ -27,8 +27,9 @@ from accelerate import PartialState
 from accelerate.utils import broadcast_object_list
 from datasets import Dataset
 from dotenv import load_dotenv
-from transformers import AutoModelForCausalLM
-from trl import DPOConfig, DPOTrainer
+from transformers import AutoModelForCausalLM, PreTrainedModel
+from trl.trainer.dpo_config import DPOConfig
+from trl.trainer.dpo_trainer import DPOTrainer
 
 from halluci_mate.chess_tokenizer import BLACK_TOKEN, WHITE_TOKEN, ChessTokenizer
 from halluci_mate.eval.records import Side
@@ -78,7 +79,7 @@ def _load_pairs(path: Path) -> Dataset:
     return Dataset.from_dict({"prompt": prompts, "chosen": chosen, "rejected": rejected})
 
 
-def _load_base_model(base_model: str) -> AutoModelForCausalLM:
+def _load_base_model(base_model: str) -> PreTrainedModel:
     """Load a chess checkpoint for DPO — the policy and the frozen reference both use this.
 
     ``from_pretrained`` (not ``from_config``) is correct here: DPO continues
@@ -125,6 +126,7 @@ def main(
     weight_decay: float = 0.0,
     max_length: int = 256,
     eval_fraction: float = 0.02,
+    save_steps: int = 100,
     seed: int = 4042,
 ) -> None:
     tokenizer = ChessTokenizer()
@@ -181,9 +183,12 @@ def main(
         fp16=not torch.cuda.is_bf16_supported(),
         logging_steps=1,
         eval_strategy="steps" if eval_dataset is not None else "no",
-        eval_steps=100,
+        # Tie eval cadence to the save cadence so every saved checkpoint carries
+        # an eval_rewards/accuracies score for the post-hoc selection below;
+        # lowering save_steps for short/smoke runs then keeps selection working.
+        eval_steps=save_steps,
         save_strategy="steps",
-        save_steps=100,
+        save_steps=save_steps,
         # Keep all eval-step checkpoints so we can manually pick the best by
         # eval_rewards/accuracies after training. The v2c lesson (rewards/accuracies
         # plateaus near step 200 while eval_loss keeps dropping → late checkpoints
